@@ -879,10 +879,13 @@ impl SheetBody {
         Ok(body)
     }
 
-    /// Actual curved material, used to certify unsupported folded machining before mutation.
-    pub(crate) fn unmodeled_solid(&self, plane: &Plane) -> Result<Option<Body>> {
+    /// Actual curved material, used to certify unsupported folded machining before mutation:
+    /// one solid per bend zone or nonparallel panel. Each is sewn on its own, because the
+    /// selected pieces need not form a manifold solid together (two bends meeting at an open
+    /// corner relief touch only along an edge).
+    pub(crate) fn unmodeled_solids(&self, plane: &Plane) -> Result<Vec<Body>> {
         if self.flat || self.flanges.is_empty() {
-            return Ok(None);
+            return Ok(Vec::new());
         }
         let mut work = FlatWork::new();
         let cells: Vec<_> = self
@@ -893,10 +896,7 @@ impl SheetBody {
                 Piece::Panel(pi) => apply_vector(&self.world(pi), Vec3::Z).cross(plane.normal()).len() > 1e-6,
             })
             .collect();
-        if cells.is_empty() {
-            return Ok(None);
-        }
-        Ok(Some(kernel::sew(&self.faces(&cells, 0.0, self.t, &mut work)?)?))
+        cells.iter().map(|c| Ok(kernel::sew(&self.faces(std::slice::from_ref(c), 0.0, self.t, &mut work)?)?)).collect()
     }
 
     fn through_pocket_regions(&self, work: &mut FlatWork) -> Result<Vec<Region2>> {

@@ -1646,3 +1646,33 @@ fn fold_at_a_tab_root_names_the_real_cause() {
     outline_blank(&mut ok, json!([[0, 0], [100, 0], [100, 50], [60, 50], [60, 70], [40, 70], [40, 50], [0, 50]]));
     run(&mut ok, "sheet.fold", json!({"points": [[40, 51, 0.8], [60, 51, 0.8]], "fixed": [50, 25, 0.8]}));
 }
+
+/// #296: two bends meeting at an open corner relief touch only along an edge, so the folded
+/// material the machining guard checks must not be sewn into one solid.
+#[test]
+fn hole_beside_two_adjacent_edge_flanges_cuts_and_bends_stay_guarded() {
+    let build = |s: &mut Session| {
+        base(s, 80.0, 40.0);
+        run(s, "sheet.flange", json!({"edges":[[40.0, 0.0, 2.5]],"height":30,"angle":90}));
+        run(s, "sheet.flange", json!({"edges":[[80.0, 22.5, 2.5]],"height":15,"angle":90}));
+    };
+    let hole = |s: &mut Session, name: &str, centre: [f64; 2]| {
+        run(s, "sketch.create", json!({"plane":"XY","name":name}));
+        run(s, "sketch.circle.center", json!({"center":centre,"radius":3}));
+        run(s, "sketch.finish", json!({}));
+        s.execute("solid.extrude", &json!({"sketch":name,"through_all":true,"operation":"cut"}))
+    };
+    let mut s = Session::default();
+    build(&mut s);
+    let before = volume(&mut s);
+    assert!((before - 14057.2).abs() < 0.1, "{before}");
+    if let Err(e) = hole(&mut s, "Hole", [25.0, 20.0]) {
+        panic!("hole beside two flanges: {e}");
+    }
+    let after = volume(&mut s);
+    assert!((before - after - 9.0 * PI * 2.5).abs() < 0.05, "{before} -> {after}");
+    let mut bend = Session::default();
+    build(&mut bend);
+    let error = hole(&mut bend, "Bend", [78.5, 20.0]).unwrap_err().to_string();
+    assert!(error.contains("bend"), "{error}");
+}
