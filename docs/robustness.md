@@ -1,6 +1,6 @@
 # Kernel robustness
 
-Real users hit edge cases the Fusion oracle (docs/oracle.md) never sees: faces that coincide
+Real users hit edge cases the reference tests (docs/oracle.md) never see: faces that coincide
 by accident, tangencies, seams lying where another body cuts, walls thinner than a shell. The
 robustness runs build random but realistic designs and check every step.
 
