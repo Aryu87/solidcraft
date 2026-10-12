@@ -106,6 +106,15 @@ pub enum Sel {
     SketchPoint {
         id: String,
     },
+    /// Geometry of a different sketch, retained for projection preselection.
+    ExternalSketchCurve {
+        sketch: u64,
+        id: String,
+    },
+    ExternalSketchPoint {
+        sketch: u64,
+        id: String,
+    },
     /// A constraint or dimension (by id) of the active sketch.
     SketchConstraint {
         id: String,

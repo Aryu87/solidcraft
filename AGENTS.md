@@ -49,8 +49,9 @@ People trust SolidCraft with their designs; a crash loses their work. **This out
   commercial CAD products (Fusion, SolidWorks, Onshape, …) for this project: no test data,
   measurements, command lists, ids or files produced with them.
 - **Never read, copy or link GPL/LGPL/AGPL code**: OpenCASCADE, FreeCAD (incl. planegcs),
-  SolveSpace, CadQuery/OCP, LibreCAD, QCAD — don't even read their sources (running an
-  open-source application to get reference values is fine). The sketch solver and the blend
+  SolveSpace, CadQuery/OCP, LibreCAD, QCAD — don't even read their sources. (`tools/freecad-oracle/`
+  runs FreeCAD as a separate program through its public scripting API to compute reference values;
+  nothing from FreeCAD is linked, vendored or shipped.) The sketch solver and the blend
   operations are our own.
 - **Assets — absolutely essential.** SolidCraft contains **no iconography, images, fonts or
   artwork from commercial CAD products — ever.** Every icon is drawn in code
@@ -72,10 +73,12 @@ People trust SolidCraft with their designs; a crash loses their work. **This out
 - **Rust only.** Units are millimetres and radians internally; Z is up.
 - **Quality gates** before every commit: `cargo xtask ci` (fmt, clippy -D warnings, tests,
   assets, layers). Commit after every feature arc that builds.
-- **Publishing**: `origin` is github.com/bherbruck/solidcraft. After each commit that
-  passes `cargo xtask ci`: `git pull --rebase origin main` (re-run ci if it brought changes),
-  then `git push`. Never force-push. Never commit `plan/` or build dirs (`target*/`); check
-  `git ls-files` before pushing.
+- **Publishing**: `origin` is github.com/bherbruck/solidcraft. Changes land through **pull requests**:
+  push a branch, open a PR, and let GitHub CI run. Maintainers (and agents working for them) may
+  merge their own PR as soon as CI is green (`gh pr merge --squash`); a trivial fix (docs, typos)
+  may be merged right away. Keep each PR to one topic, rebase or merge `main` into it when it
+  conflicts, and never force-push `main`. Never commit `plan/`, build dirs (`target*/`) or
+  generated reference data; check `git ls-files` before pushing.
 - **Never break wasm**: everything below the apps must build for `wasm32-unknown-unknown`
   (`cargo xtask wasm`, part of `cargo xtask ci`).
 
@@ -122,9 +125,9 @@ before the draft is verified.
   `ui.render` or `solvecraft-cli snapshot`.
 - Headless: `solvecraft-cli run script.json --out part.step`, `solvecraft-cli eval design.solvecraft`,
   `solvecraft-cli snapshot script.json --out shot.png`, `solvecraft-cli commands`.
-- Reference tests: `docs/oracle.md`, `docs/step-import.md` and `docs/iges-import.md` are being
-  rebuilt on analytic and FreeCAD reference values (#292); `cargo xtask oracle` and
-  `cargo xtask step-corpus [--iges]` write their placeholders until then.
+- Reference tests: `cargo xtask oracle` replays `tests/oracle/*/recipe.json` and compares with
+  each case's `expected.json` (analytic or FreeCAD values; writes `docs/oracle.md`). Expected
+  values never come from a commercial CAD product.
 - Build with `CARGO_TARGET_DIR=<repo>/target`. Windows: `cargo xwin build --release --target x86_64-pc-windows-msvc -p solvecraft`.
 
 ## Roadmap

@@ -13,8 +13,7 @@ profile and the wasm build check.
 | Layout tests | `crates/ui-egui/tests/ui_layout.rs`, `window_widths.rs` | panels and dialogs at every window width |
 | Design-file corpus | `apps/solvecraft-cli/tests/corpus` | every saved file version still opens and evaluates the same |
 | Kill mid-save | `apps/solvecraft-cli/tests/kill_mid_save.rs` | a save killed at any moment leaves a readable file |
-| Reference parts | `cargo xtask oracle` → [docs/oracle.md](oracle.md) | being rebuilt on analytic and FreeCAD reference values ([#292](https://github.com/bherbruck/solidcraft/issues/292)) |
-| STEP/IGES corpus | `cargo xtask step-corpus [--iges]` → [docs/step-import.md](step-import.md) | being rebuilt on analytic and FreeCAD reference values ([#292](https://github.com/bherbruck/solidcraft/issues/292)) |
+| Reference tests | `cargo xtask oracle` → [docs/oracle.md](oracle.md) | parts rebuilt from `tests/oracle/*/recipe.json`, compared with analytic or FreeCAD expected values |
 
 ## UI scenarios
 

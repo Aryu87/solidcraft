@@ -122,7 +122,7 @@ the most complete description of the house style.
 |---|---|---|
 | Unit and engine tests | next to the code, or `*_tests.rs` files | `cargo xtask test` (or `cargo test --workspace --profile ci`) |
 | UI scenarios | `crates/ui-egui/tests/scenarios/*.json` | part of `cargo test` |
-| Reference parts | `cargo xtask oracle` | being rebuilt (see below) |
+| Reference tests | `cargo xtask oracle` | `tests/oracle/` (see below) |
 
 **UI scenarios** drive the real app headless: start a tool, click a plane or a sketch point,
 press keys, then assert on the result.
@@ -153,10 +153,15 @@ in the PR. `cargo xtask test` builds the tests with it and then runs every test 
 `cargo xtask test -- shell`. Tests run beside each other on a busy machine, so a test must not
 depend on wall-clock timing.
 
-**Reference parts.** The earlier reference data has been retired. Reference results are being
-rebuilt on analytic and FreeCAD values
-([#292](https://github.com/bherbruck/solidcraft/issues/292)); until then, geometry tests check
-values you can derive by hand.
+**The reference tests** are 76 parts in [`tests/oracle/`](tests/oracle/), each a `recipe.json`
+in our own format with an `expected.json` beside it. SolidCraft rebuilds the recipe and compares
+body count, volume, area, centre of mass and bounding box (and, where there is a `reference.stl`,
+the surface itself). Expected values are either worked out in closed form
+(`tools/oracle-analytic/`) or computed by building the same recipe in FreeCAD, run as a separate
+program (`tools/freecad-oracle/`); each file says which. [docs/oracle.md](docs/oracle.md) has
+the current results, and CI runs `cargo xtask oracle` on every pull request. A case that fails
+because of a known bug names its issue in `expected.json` (`"known_failure": "#123"`); never
+change an expected value to match SolidCraft's output.
 
 ## Sending a change
 

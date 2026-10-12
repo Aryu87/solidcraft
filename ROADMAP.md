@@ -9,7 +9,7 @@ features → parametric timeline) as an open, pure-Rust, agent-drivable applicat
 |---|---|
 | Where are we? | **M0 and M13 done; M1, M2, M5–M7, M9, M10, M14 in progress.** Sketch with solver and the full SKETCH create/modify set; extrude, revolve (two sides, symmetric, to object), fillet/chamfer (variable radius, chord length, a radius per edge, corner patches), holes, threads (cosmetic and modelled), patterns, mirror, shell (inside/outside/both), draft, loft, sweep, coil, split body and split face, delete face, construction planes, axes and points; persistent naming of faces and edges; parameters and configurations; components, joints, motion studies, exploded views; sheet metal and a plastic enclosure subset; STEP/IGES/3MF/STL/OBJ/DXF; autosave and crash recovery; desktop and browser (wasm) app, CLI, MCP server. |
 | Features | Every registered command by area — [docs/features.md](docs/features.md) (`cargo xtask features`); registry breadth does not establish workflow or geometric depth |
-| Reference tests | The earlier reference data has been retired; reference results are being rebuilt on analytic and FreeCAD values ([#292](https://github.com/bherbruck/solidcraft/issues/292)). Analytic and UI regressions run in `cargo xtask ci`. |
+| Reference tests | **75 / 76 parts match** — [docs/oracle.md](docs/oracle.md): public cases in `tests/oracle/` with analytic (55) or FreeCAD-computed (21) expected values, run by CI on every PR; 75-sm-bracket-holes fails (#296). |
 | Tests | Solver, profiles, kernel booleans/blends/measures, expressions, timeline, persistent naming, file formats and migrations, assemblies, sheet metal, engine end-to-end, hostile-input fuzz over every command and headless UI scenarios. `cargo xtask ci` reports the current passing counts. |
 | Gates | `cargo xtask ci`: fmt, clippy -D warnings, tests, asset attribution, layering, wasm32 build — green |
 | Time to a useful alpha (M0–M6) | ≈ **82 agent hours** remain (sum of the M1–M6 estimates below) |
@@ -47,7 +47,7 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
 | M1 | Sketch depth: command coverage implemented — projection/intersect/include as linked geometry (auto-project on faces, lost-reference warnings, break link), full SKETCH create/modify set (slots, polygons, tangent arcs/circles, ellipse, fit/control splines, conic, text, trim/extend/break, fillet/chamfer, offset, mirror, patterns, move/scale, blend curve, centerline), constraints incl. curvature and polygon with over-constraint refusal, driven/arc-length/linear-diameter dimensions, AutoConstrain, DXF/SVG insert, 3D sketch curves (Project To Surface, Intersection Curve, Isoparametric Curve, Spun Profile), exact free-form profiles (B-spline/NURBS edges, any spline degree, curves cut by crossings), sweeps and pipes along 3D sketch curves, canvases and decals, curvature combs. Exact free-form Extend and certified associative offsets now preserve geometry and IDs through edits, deletion and reopen. Occurrence-frame 3D wires now store explicit coordinate spaces and retain points and analytic fits through moves, refresh, undo and reopen. Remaining workflow repairs: mixed offset junctions, legacy natural-spline seams, and damaged legacy wire links lacking frame provenance | in progress | 4 |
 | M2 | Robust modelling: coplanar booleans in the kernel, holes (placed on faces and on sketch points), threads (cosmetic, then modelled), patterns, mirror, shell, draft, split, construction geometry | in progress | 16 |
 | M3 | General fillets and chamfers (curved edges, chains, vertex blends); saddle rolling-ball surfaces now use continuous seam sections and arc-length fitting with shared contact boundaries and bounded accuracy checks | in progress | 30 |
-| M4 | Files: STEP import (done — [docs/step-import.md](docs/step-import.md)), 3MF export and 3MF/STL import as mesh bodies (done), DXF sketches, OBJ import | in progress | 6 |
+| M4 | Files: STEP import (done — [docs/step-import.md](docs/step-import.md)), 3MF export and 3MF/STL import as mesh bodies (done), constant-section parametric mesh reconstruction, DXF sketches, OBJ import | in progress | 6 |
 | M5 | Persistent naming of faces and edges (plan/adr/0002): faces named from their history (sketch curve sides, caps, revolve sections, primitive sides, blends, pattern/mirror copies; split pieces numbered), edges by their faces; fillets/chamfers, sketches on faces, shell/draft/offset/replace faces, hole placements, joint origins and face appearances resolve by name first and warn when the entity split or vanished: done. sheet metal edges by base sketch line and flange side, shell inner faces, sweep and loft roles: done. Left: kernel-reported face history (exact through coincident surfaces) | in progress | 20 |
 | M6 | UI depth: selection feedback and origin (done), timeline editing (done: hover and selection highlight modifier faces, including fillets and chamfers; edit feature, history marker drag, reorder with dependency checks, suppress, rename, delete with dependents, re-resolved references; redefining selections refreshes persistent edge/face references while retaining feature identity and dimension names), right-docked dialogs (done), live previews for every feature dialog (done), keyboard-first commands with on-canvas value boxes and sketch inline dimensions (done), drag manipulators with automatic join/cut (done: extrude incl. two sides, fillet, shell, hole depth, move, pattern spacing, revolve rotator; taper handle open), dark theme (done), right-click menu with Repeat (done), measure tool (done), section analysis (done), selection filter (done), drag-solve of sketch points (done); appearance controls now preserve body/face/component targeting, named transparent looks, reuse/search and override removal; preferences | in progress | 6 |
 | M7 | Sweep, loft (incl. to a point), rib and web (to next / depth), emboss (planar faces and exact radial emboss/deboss of bounded orthogonal profiles on complete exterior cylinders/sleeves), thread (cosmetic, and modelled M3–M20 outside and inside: the ISO profile screwed in as a faceted cut), coil (smooth B-spline helical walls), pipe, pattern on path, patterns of bodies and components, replace face (parallel), align, remove, feature copy/paste: done. Unique eligible cylindrical targets are inferred for new Emboss features. Left: general curved-face emboss and exact (unfaceted) modelled threads | in progress | 12 |
@@ -61,6 +61,11 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
 
 ## Dimensioning and error reporting
 
+- Sketch text can be edited from a selected outline's context menu or the Edit Text command.
+  Content, baseline X/Y, height and rotation update the original text source in one undo step;
+  cancelling or rejecting an invalid value preserves the sketch. Position and height fields
+  use the document units captured when editing starts; generated outlines remain associated
+  with their text source, and untouched inputs preserve their saved internal values.
 - Repeating the initial point of a planar multi-point sketch drawing tool is neutral: the tool
   waits for a distinct point without a degenerate-shape error or history entry. Typed input
   and programmatic commands retain their validation.
@@ -71,6 +76,11 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
   Type a value and press Enter to commit one undo step; rejected values remain editable and
   cancellation leaves the sketch unchanged. Fit keeps geometry clear of the Sketch Palette
   and navigation controls, including enlarged displays and nested pending placements.
+- Sketch annotations, live drawing lengths and Measure use document units. Inches show
+  three decimals and retain a meaningful fourth digit. Bare length dimension entry captures
+  the current design unit; changing units leaves existing geometry and expressions intact.
+  Component/canvas distance controls, sketch cursor coordinates, flat-pattern dimensions
+  and pocket depths, interference volumes and parts-library lengths also use design units.
 - Curvature and Polygon constraints accept complete preselected operands. Fix/Unfix
   consumes complete point/curve selections consistently; mixed or ambiguous selections
   retain the picking workflow. Rejected constraints preserve selection and undo history.
@@ -148,7 +158,8 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
   convex planar body or of an extruded part; fillets inside patterns; closed chains of curved
   edges between any two smooth sides (a branch pipe on a main pipe), by a rolling ball (the
   blend a rational B-spline through exact arcs), closed or ending at planar faces square to the
-  edges.
+  edges, where straight or curved cap edges are trimmed to the contacts (the straight edge
+  between two overlapping extruded arcs).
 - Booleans: prisms along one direction (plates with holes, slots, patterns of them, equal
   sections stacked end to end) are combined exactly in 2D. Qualified axial cuts preserve
   annular holes with overrun cutters, including inward Press Pull after a joined extrusion;
@@ -237,6 +248,10 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
   existing geometry before assigning positions, retaining saved curve IDs and constraints
   across enumeration changes and resize, including concentric circles. Ambiguous identities
   retain the last geometry and report a lost reference; permutation matching is bounded.
+- Project accepts complete supported preselection in one undo step. Visible external sketch
+  curves and points retain their source sketch identity; model geometry, axes and planes use
+  the existing linked projection commands. Rejection preserves the document and selection;
+  mixed selections retain ordinary tool-first picking.
 - Inline sketch dimensions: Tab and Shift+Tab cycle within the active shape's value boxes,
   selecting visited values for replacement. Expression completion retains forward-Tab
   priority; real keyboard regressions cover rectangles, lines and single-value circles.
@@ -312,6 +327,12 @@ or edited values, including the Appearance panel.
   median opening, with 82% spent rebuilding geometry; halving full opening remains open.
 
 ## Kernel
+
+- Successful Boolean retries report their strategy and numerical adjustments as
+  feature warnings and structured inspection data. Diagnostics survive cached
+  evaluation, undo/redo and cold reopening; the robustness runner counts retry
+  events by strategy and reports any bounded-log truncation. Existing geometry
+  acceptance checks remain in force.
 
 - Boolean intersection-curve construction refuses point-only, collapsed and non-finite
   polylines without panicking. Direct constructor regressions retain valid open endpoints
