@@ -359,6 +359,12 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
     egui::Panel::top("sc_toolbar").exact_size(92.0).frame(egui::Frame::NONE.fill(t.toolbar)).show(ui, |ui| {
         let r = ui.max_rect();
         let painter = ui.painter().clone();
+        // Right-click on the toolbar's empty space: its own menu. Interacted first, so every
+        // button, tab and panel label is above it.
+        let bg = ui.interact(r, ui.id().with("toolbar_bg"), Sense::click());
+        if bg.secondary_clicked() {
+            crate::context_menu::open_for(app, bg.interact_pointer_pos().unwrap_or(r.left_bottom()), crate::context_menu::Target::Toolbar);
+        }
         // Workspace selector and tabs.
         let tabs_y = r.top() + 2.0;
         // The workspace switcher spans the toolbar's height (the tab row and the panel row).
@@ -426,6 +432,10 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
         let top = r.top() + 26.0;
         let mut drop: Option<(&'static str, &'static str, Option<&'static str>)> = None;
         let mut menu: Option<(egui::Pos2, &'static str)> = None;
+        // A drop-down row's pin icon clicked: pin or unpin that command.
+        let mut toggle: Option<&'static str> = None;
+        // The open drop-down (a button dropped on it leaves the toolbar).
+        let mut popup_rect: Option<Rect> = None;
         let mut overflow = Vec::new();
         for (panel, cmds, promote) in crate::toolbar_custom::panel_lists(&tab) {
             let panel: &&str = &panel;
@@ -447,26 +457,28 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 painter.line_segment([pos2(free.left(), free.top() + 2.0), pos2(free.left(), free.bottom() - 2.0)], Stroke::new(2.0, t.accent));
             }
             if let Some(d) = fresp.dnd_release_payload::<ToolbarDrag>() {
-                drop = Some((d.0, *panel, None));
+                drop = Some((d.id, *panel, None));
             }
             for (i, c) in shown.iter().enumerate() {
                 let br = Rect::from_min_size(pos2(px + 4.0 + i as f32 * 40.0, top + 2.0), vec2(38.0, 38.0));
                 let info = c.info(&app.session);
                 let resp = ui.interact(br, ui.id().with(("cmd", c.id)), Sense::click_and_drag());
                 crate::scenario::publish_handle(&format!("toolbar:{}", c.id), br.center());
+                // The button itself (`toolbar:<id>` is also a drop-down row's while one is open).
+                crate::scenario::publish_handle(&format!("button:{}", c.id), br.center());
                 if resp.drag_started() {
-                    resp.dnd_set_drag_payload(ToolbarDrag(c.id));
+                    resp.dnd_set_drag_payload(ToolbarDrag { id: c.id, from_menu: false });
                 }
                 if let Some(d) = resp.dnd_hover_payload::<ToolbarDrag>()
-                    && d.0 != c.id
+                    && d.id != c.id
                 {
                     painter
                         .line_segment([pos2(br.left() - 1.0, br.top() + 2.0), pos2(br.left() - 1.0, br.bottom() - 2.0)], Stroke::new(2.0, t.accent));
                 }
                 if let Some(d) = resp.dnd_release_payload::<ToolbarDrag>()
-                    && d.0 != c.id
+                    && d.id != c.id
                 {
-                    drop = Some((d.0, *panel, Some(c.id)));
+                    drop = Some((d.id, *panel, Some(c.id)));
                 }
                 if resp.secondary_clicked() {
                     menu = Some((resp.interact_pointer_pos().unwrap_or(br.left_bottom()), c.id));
@@ -565,9 +577,11 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                             }
                         }
                         for c in &cmds {
-                            match dropdown_row(app, ui, c, row_w) {
+                            let pinned = crate::toolbar_custom::pinned_on(app, &tab, c.id).is_some();
+                            match dropdown_row(app, ui, c, row_w, pinned) {
                                 RowAction::None => {}
                                 RowAction::Menu(at) => menu = Some((at, c.id)),
+                                RowAction::TogglePin => toggle = Some(c.id),
                                 RowAction::Start => {
                                     app.start(c.id);
                                     ui.ctx().data_mut(|d| d.remove::<egui::Id>(egui::Id::new("sc_panel_open")));
@@ -576,7 +590,11 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                         }
                     });
                 });
-                if (area.response.clicked_elsewhere() && !lresp.clicked()) || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                popup_rect = Some(area.response.rect);
+                crate::scenario::publish_rect("toolbar_dropdown", area.response.rect);
+                // A drag out of the drop-down ends with a release elsewhere: not a click elsewhere.
+                let dragging = egui::DragAndDrop::has_payload_of_type::<ToolbarDrag>(ui.ctx());
+                if (area.response.clicked_elsewhere() && !lresp.clicked() && !dragging) || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                     ui.ctx().data_mut(|d| d.remove::<egui::Id>(egui::Id::new("sc_panel_open")));
                 }
             }
@@ -610,8 +628,26 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
             });
         }
         painter.line_segment([pos2(r.left(), r.bottom() - 0.5), pos2(r.right(), r.bottom() - 0.5)], Stroke::new(1.0, t.border));
+        // Dragging a command: its icon follows the pointer; a toolbar button dragged off the
+        // toolbar (or into the open drop-down) shows it will be removed.
+        let pointer = ui.input(|i| i.pointer.latest_pos());
+        let over_popup = |p: egui::Pos2| popup_rect.is_some_and(|pr| pr.contains(p));
+        let leaves = |p: egui::Pos2| !r.contains(p) || over_popup(p);
+        if let (Some(d), Some(p)) = (egui::DragAndDrop::payload::<ToolbarDrag>(ui.ctx()), pointer) {
+            let removing = !d.from_menu && leaves(p);
+            drag_ghost(ui.ctx(), d.id, p, removing);
+            if ui.input(|i| i.pointer.any_released()) && drop.is_none() {
+                egui::DragAndDrop::clear_payload(ui.ctx());
+                if removing {
+                    crate::toolbar_custom::remove(app, &tab, d.id);
+                }
+            }
+        }
         if let Some((id, panel, before)) = drop {
             crate::toolbar_custom::reorder(app, &tab, id, panel, before);
+        }
+        if let Some(id) = toggle {
+            crate::toolbar_custom::toggle(app, &tab, id);
         }
         if let Some((at, id)) = menu {
             ui.ctx().data_mut(|d| d.remove::<egui::Id>(egui::Id::new("sc_panel_open")));
@@ -625,6 +661,7 @@ enum RowAction {
     None,
     Start,
     Menu(egui::Pos2),
+    TogglePin,
 }
 
 const ROW_H: f32 = 24.0;
@@ -649,17 +686,25 @@ fn dropdown_width(app: &SolveApp, ui: &egui::Ui, cmds: &[&'static solvecraft_eng
 
 /// One command row of a panel drop-down: icon, label and shortcut, with the hover background
 /// under the pointer or keyboard focus (like every menu).
-fn dropdown_row(app: &SolveApp, ui: &mut egui::Ui, c: &'static solvecraft_engine::CommandSpec, width: f32) -> RowAction {
+fn dropdown_row(app: &SolveApp, ui: &mut egui::Ui, c: &'static solvecraft_engine::CommandSpec, width: f32, pinned: bool) -> RowAction {
     let t = Tokens::get();
     let info = c.info(&app.session);
     let (rect, _) = ui.allocate_exact_size(vec2(width, ROW_H), Sense::hover());
-    let sense = if info.enabled { Sense::click() } else { Sense::hover() };
+    // Every row drags onto the toolbar (to pin it there); enabled rows also start their command.
+    let sense = if info.enabled { Sense::click_and_drag() } else { Sense::drag() };
     let resp = ui.interact(rect, dropdown_row_id(ui, c.id), sense);
+    if resp.drag_started() {
+        resp.dnd_set_drag_payload(ToolbarDrag { id: c.id, from_menu: true });
+    }
+    // The pin at the row's end (above the row, so it takes its own clicks).
+    let pr = Rect::from_center_size(pos2(rect.right() - 13.0, rect.center().y), vec2(20.0, 20.0));
+    let pin = ui.interact(pr, ui.id().with(("dropdown_pin", c.id)), Sense::click());
+    let pointer_on = (resp.hovered() || pin.hovered()) && !egui::DragAndDrop::has_any_payload(ui.ctx());
     let label = app.tr_label(c.label).to_string();
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled() && info.enabled, &label));
     crate::scenario::publish_handle(&format!("toolbar:{}", c.id), rect.center());
     crate::scenario::publish_handle(&format!("dropdown:{}", c.id), rect.center());
-    let hot = info.enabled && (resp.hovered() || resp.has_focus());
+    let hot = info.enabled && (pointer_on || resp.has_focus());
     let p = ui.painter();
     if hot {
         p.rect_filled(rect, 3.0, t.hover);
@@ -671,7 +716,18 @@ fn dropdown_row(app: &SolveApp, ui: &mut egui::Ui, c: &'static solvecraft_engine
     icons::paint(p, ir, c.icon, ink, fill, acc);
     p.text(pos2(ir.right() + 8.0, rect.center().y), Align2::LEFT_CENTER, &label, FontId::proportional(13.0), text);
     if let Some(k) = c.shortcut {
-        p.text(pos2(rect.right() - 8.0, rect.center().y), Align2::RIGHT_CENTER, k, FontId::proportional(13.0), t.text_dim);
+        p.text(pos2(pr.left() - 4.0, rect.center().y), Align2::RIGHT_CENTER, k, FontId::proportional(13.0), t.text_dim);
+    }
+    if pointer_on || resp.has_focus() {
+        if pin.hovered() {
+            p.rect_filled(pr, 3.0, t.border.gamma_multiply(0.6));
+        }
+        pin_icon(p, pr, pinned, if pinned { t.accent } else { t.text_dim });
+        crate::scenario::publish_handle(&format!("dropdown_pin:{}", c.id), pr.center());
+    }
+    let tip = if pinned { "Remove from Toolbar" } else { "Pin to Toolbar" };
+    if pin.on_hover_text(tip).clicked() {
+        return RowAction::TogglePin;
     }
     let resp = match &info.disabled_reason {
         Some(why) if !info.enabled => resp.on_hover_text(why),
@@ -686,9 +742,42 @@ fn dropdown_row(app: &SolveApp, ui: &mut egui::Ui, c: &'static solvecraft_engine
     RowAction::None
 }
 
-/// A toolbar button being dragged (its command id).
+/// A command being dragged: a toolbar button, or a row of a panel drop-down (`from_menu`).
 #[derive(Clone, Copy, Debug)]
-struct ToolbarDrag(&'static str);
+struct ToolbarDrag {
+    id: &'static str,
+    from_menu: bool,
+}
+
+/// The dragged command's icon under the pointer, crossed out when releasing removes it.
+fn drag_ghost(ctx: &egui::Context, id: &str, at: egui::Pos2, removing: bool) {
+    let t = Tokens::get();
+    let Some(c) = solvecraft_engine::find_command(id) else { return };
+    let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("sc_toolbar_drag")));
+    let r = Rect::from_center_size(at + vec2(14.0, 16.0), vec2(30.0, 30.0));
+    p.rect(r, 4.0, t.toolbar.gamma_multiply(0.92), Stroke::new(1.0, if removing { t.error } else { t.accent }), egui::StrokeKind::Inside);
+    icons::paint(&p, r.shrink(5.0), c.icon, t.icon, t.icon_fill, t.accent);
+    if removing {
+        let s = Stroke::new(2.0, t.error);
+        let x = Rect::from_center_size(r.right_top(), vec2(9.0, 9.0));
+        p.circle_filled(x.center(), 7.0, t.toolbar);
+        p.line_segment([x.left_top(), x.right_bottom()], s);
+        p.line_segment([x.right_top(), x.left_bottom()], s);
+    }
+    crate::scenario::publish_handle(if removing { "toolbar_drag:remove" } else { "toolbar_drag" }, at);
+}
+
+/// A push pin (drawn in code): upright when the command is on the toolbar, tilted when not.
+fn pin_icon(p: &egui::Painter, r: Rect, on: bool, col: Color32) {
+    let c = r.center();
+    let (head, tip) = if on { (c - vec2(0.0, 4.0), c + vec2(0.0, 6.0)) } else { (c + vec2(-3.0, -3.0), c + vec2(5.0, 5.0)) };
+    p.line_segment([head, tip], Stroke::new(1.5, col));
+    if on {
+        p.circle_filled(head, 3.5, col);
+    } else {
+        p.circle_stroke(head, 3.0, Stroke::new(1.5, col));
+    }
+}
 
 /// The SELECT panel: what a click in the view picks.
 fn selection_filter(app: &mut SolveApp, ui: &mut egui::Ui) {
