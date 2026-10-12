@@ -767,16 +767,22 @@ fn drag_ghost(ctx: &egui::Context, id: &str, at: egui::Pos2, removing: bool) {
     crate::scenario::publish_handle(if removing { "toolbar_drag:remove" } else { "toolbar_drag" }, at);
 }
 
-/// A push pin (drawn in code): upright when the command is on the toolbar, tilted when not.
+/// A push pin (drawn in code): upright and filled when the command is on the toolbar, tilted and
+/// outlined when not.
 fn pin_icon(p: &egui::Painter, r: Rect, on: bool, col: Color32) {
     let c = r.center();
-    let (head, tip) = if on { (c - vec2(0.0, 4.0), c + vec2(0.0, 6.0)) } else { (c + vec2(-3.0, -3.0), c + vec2(5.0, 5.0)) };
-    p.line_segment([head, tip], Stroke::new(1.5, col));
+    let (sin, cos) = if on { (0.0, 1.0) } else { std::f32::consts::FRAC_PI_4.sin_cos() };
+    // Local coordinates: the pin points down, its head on top.
+    let at = |x: f32, y: f32| c + vec2(x * cos - y * sin, x * sin + y * cos);
+    let head = vec![at(-2.5, -7.0), at(2.5, -7.0), at(3.0, -2.0), at(-3.0, -2.0)];
+    let stroke = Stroke::new(1.4, col);
     if on {
-        p.circle_filled(head, 3.5, col);
+        p.add(egui::Shape::convex_polygon(head, col, stroke));
     } else {
-        p.circle_stroke(head, 3.0, Stroke::new(1.5, col));
+        p.add(egui::Shape::closed_line(head, stroke));
     }
+    p.line_segment([at(-5.5, -2.0), at(5.5, -2.0)], stroke);
+    p.line_segment([at(0.0, -2.0), at(0.0, 7.0)], stroke);
 }
 
 /// The SELECT panel: what a click in the view picks.
