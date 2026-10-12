@@ -88,13 +88,16 @@ The [README](README.md#architecture) has the layer table. The short version:
 
 ## Rules that aren't negotiable
 
-1. **Clean-room.** We observe Fusion as a black box: its UI, how parts it builds measure, and
-   what it does with a given input. We never copy Autodesk code, icons, artwork, help text,
-   tooltips, templates or materials, and we never commit files Fusion produced. Command ids are
-   our own (`solid.fillet`, not Fusion's internal names).
+1. **Independent.** SolidCraft is independent. Behaviour is designed from public
+   documentation, general CAD conventions and user feedback. Reference tests use analytic values
+   and open-source tools. We don't drive, script, automate or extract data from commercial CAD
+   products, and we never copy another product's code, icons, artwork, help text, tooltips,
+   templates or materials. Command ids are our own (`solid.fillet`).
 2. **No GPL/LGPL/AGPL code, not even reading it.** That rules out OpenCASCADE, FreeCAD
    (including planegcs), SolveSpace, CadQuery/OCP, LibreCAD and QCAD. SolidCraft is
-   MIT OR Apache-2.0, and its solver and blends are written from the maths. Permissive
+   MIT OR Apache-2.0, and its solver and blends are written from the maths. (Running an
+   open-source application to get reference values for a test is fine; reading its source is
+   not.) Permissive
    dependencies are fine. Note which one you're adding and why in the PR, and run
    `cargo xtask licences` so THIRD-PARTY-LICENSES.txt lists it (CI checks that it is current).
 3. **Every asset is original or openly licensed and has a row in
@@ -119,7 +122,7 @@ the most complete description of the house style.
 |---|---|---|
 | Unit and engine tests | next to the code, or `*_tests.rs` files | `cargo xtask test` (or `cargo test --workspace --profile ci`) |
 | UI scenarios | `crates/ui-egui/tests/scenarios/*.json` | part of `cargo test` |
-| Fusion oracle | `cargo xtask oracle` | needs the local oracle data (see below) |
+| Reference parts | `cargo xtask oracle` | being rebuilt (see below) |
 
 **UI scenarios** drive the real app headless: start a tool, click a plane or a sketch point,
 press keys, then assert on the result.
@@ -150,11 +153,10 @@ in the PR. `cargo xtask test` builds the tests with it and then runs every test 
 `cargo xtask test -- shell`. Tests run beside each other on a busy machine, so a test must not
 depend on wall-clock timing.
 
-**The Fusion oracle** is a set of 76 reference parts, each built in Fusion from a recipe.
-SolidCraft rebuilds the same recipe and compares volume, area and topology counts with Fusion's
-measurements; [docs/oracle.md](docs/oracle.md) has the current results. The recipes and
-measurements live outside the repo (`plan/`, gitignored), because they come from a Fusion
-install. If you work on geometry and want to check against it, ask in an issue.
+**Reference parts.** The earlier reference data has been retired. Reference results are being
+rebuilt on analytic and FreeCAD values
+([#292](https://github.com/bherbruck/solidcraft/issues/292)); until then, geometry tests check
+values you can derive by hand.
 
 ## Sending a change
 
