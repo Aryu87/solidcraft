@@ -163,7 +163,9 @@ fn motion_key(cmds: &[(String, Value)], revision: u64, colors: Colors) -> Option
     }
     let mut setup = cmds.to_vec();
     for (command, params) in &mut setup {
-        if matches!(command.as_str(), "joint.drive" | "joint.create") && let Some(p) = params.as_object_mut() {
+        if matches!(command.as_str(), "joint.drive" | "joint.create")
+            && let Some(p) = params.as_object_mut()
+        {
             p.remove("values");
             if command == "joint.drive" {
                 p.remove("value");
@@ -587,10 +589,7 @@ mod tests {
     }
 
     fn pose() -> Built {
-        Built {
-            scene: GpuScene::default(), replaced: vec!["Lid".into()], error: None,
-            bounds: Aabb3::EMPTY, applied: None, tapered: Vec::new(),
-        }
+        Built { scene: GpuScene::default(), replaced: vec!["Lid".into()], error: None, bounds: Aabb3::EMPTY, applied: None, tapered: Vec::new() }
     }
 
     /// The worker completes while the slider is still held or Play keeps advancing.
@@ -625,7 +624,8 @@ mod tests {
     #[test]
     fn intermediate_motion_rejects_other_setups_and_obsolete_errors() {
         for (context, job) in [
-            (None, Ok(pose())), (Some(43), Ok(pose())),
+            (None, Ok(pose())),
+            (Some(43), Ok(pose())),
             (Some(42), Err("old invalid value".into())),
             (Some(42), Ok(Built { error: Some("old tool preview error".into()), ..pose() })),
         ] {
@@ -642,11 +642,13 @@ mod tests {
 
     #[test]
     fn motion_context_changes_only_when_the_joint_setup_changes() {
-        let commands = |angle| vec![
-            ("joint.edit".into(), json!({"joint": 1, "flip": true})),
-            ("joint.limits".into(), json!({"joint": 1, "min": "-135 deg", "max": "0 deg"})),
-            ("joint.drive".into(), json!({"joint": 1, "values": [angle]})),
-        ];
+        let commands = |angle| {
+            vec![
+                ("joint.edit".into(), json!({"joint": 1, "flip": true})),
+                ("joint.limits".into(), json!({"joint": 1, "min": "-135 deg", "max": "0 deg"})),
+                ("joint.drive".into(), json!({"joint": 1, "values": [angle]})),
+            ]
+        };
         let key = motion_key(&commands("-30 deg"), 7, colors());
         assert!(key.is_some());
         assert_eq!(key, motion_key(&commands("-60 deg"), 7, colors()));

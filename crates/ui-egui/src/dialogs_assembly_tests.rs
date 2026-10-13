@@ -272,14 +272,25 @@ fn drive_slider_previews_intermediate_positions_before_release() {
     h.app = two_boxes();
     h.app.viewport.no_pixels = true;
     let (a, b) = (occ(&h.app, "A"), occ(&h.app, "B"));
-    h.app.run("joint.create", json!({"type": "revolute", "a": {"occurrence": a, "face": [10, 10, 10]},
-        "b": {"occurrence": b, "face": [40, 10, 0]}, "limits": [[-90, 90]]})).unwrap();
+    h.app
+        .run(
+            "joint.create",
+            json!({"type": "revolute", "a": {"occurrence": a, "face": [10, 10, 10]},
+        "b": {"occurrence": b, "face": [40, 10, 0]}, "limits": [[-90, 90]]}),
+        )
+        .unwrap();
     let before = h.app.session.doc.clone();
     h.app.start("joint.drive");
     h.frames(4);
-    let bounds = h.output.accesskit_update.as_ref().unwrap().nodes.iter().find_map(|(_, n)| {
-        (n.role() == egui::accesskit::Role::Slider).then(|| n.bounds()).flatten()
-    }).expect("drive slider");
+    let bounds = h
+        .output
+        .accesskit_update
+        .as_ref()
+        .unwrap()
+        .nodes
+        .iter()
+        .find_map(|(_, n)| (n.role() == egui::accesskit::Role::Slider).then(|| n.bounds()).flatten())
+        .expect("drive slider");
     let at = |fraction: f64| egui::pos2((bounds.x0 + fraction * (bounds.x1 - bounds.x0)) as f32, ((bounds.y0 + bounds.y1) / 2.0) as f32);
     let start = at(0.25);
     h.app.synthetic.extend([
@@ -303,7 +314,12 @@ fn drive_slider_previews_intermediate_positions_before_release() {
     assert!(h.app.preview.error.is_none());
     assert_eq!(h.app.preview.replaced, ["Body2"]);
     assert_eq!(h.app.session.doc, before);
-    h.app.synthetic.push(egui::Event::PointerButton { pos: at(0.75), button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() });
+    h.app.synthetic.push(egui::Event::PointerButton {
+        pos: at(0.75),
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: Default::default(),
+    });
     h.frames(3);
     h.step(&json!({"key": "Escape"})).unwrap();
     assert!(h.app.dialog.is_none());
