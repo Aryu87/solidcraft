@@ -1,0 +1,44 @@
+name: Hinge preview evidence
+on:
+  push:
+    branches: [fix/live-hinge-preview]
+permissions:
+  contents: read
+jobs:
+  evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 2
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          key: native-tests
+      - run: cargo fmt --all
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: formatted-hinge-sources
+          path: |
+            crates/ui-egui/src/preview.rs
+            crates/ui-egui/src/dialogs_assembly.rs
+            crates/ui-egui/src/dialogs_assembly_tests.rs
+      - run: cargo test -p solidcraft-ui-egui --profile ci --locked joint_motion_shows_completed_poses
+      - run: cargo test -p solidcraft-ui-egui --profile ci --locked drive_slider_previews_intermediate_positions_before_release
+      - run: cargo build -p solidcraft --profile ci --locked
+      - run: sudo apt-get update && sudo apt-get install -y xvfb ffmpeg libxkbcommon0 libegl1 libgl1-mesa-dri
+      - name: Capture fixed UI
+        run: xvfb-run -a -s '-screen 0 1440x1000x24' python3 .github/hinge_evidence.py after
+      - name: Restore original scheduler for comparison
+        run: git checkout HEAD^ -- crates/ui-egui/src/preview.rs
+      - run: cargo build -p solidcraft --profile ci --locked
+      - name: Capture original UI
+        run: xvfb-run -a -s '-screen 0 1440x1000x24' python3 .github/hinge_evidence.py before
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: hinge-preview-before-after
+          path: evidence/
