@@ -29,11 +29,11 @@ jobs:
       - run: cargo test -p solidcraft-ui-egui --profile ci --locked joint_motion_shows_completed_poses
       - run: cargo test -p solidcraft-ui-egui --profile ci --locked drive_slider_previews_intermediate_positions_before_release
       - run: cargo build -p solidcraft --profile ci --locked
-      - run: sudo apt-get update && sudo apt-get install -y xvfb ffmpeg libxkbcommon0 libegl1 libgl1-mesa-dri
+      - run: sudo apt-get update && sudo apt-get install -y xvfb ffmpeg libxkbcommon0 libxkbcommon-x11-0 libegl1 libgl1-mesa-dri
       - name: Capture fixed UI
         run: xvfb-run -a -s '-screen 0 1440x1000x24' python3 .github/hinge_evidence.py after
       - name: Restore original scheduler for comparison
-        run: git checkout HEAD^ -- crates/ui-egui/src/preview.rs
+        run: git show d2676da78928b2b249fc68c1ac0d5021d4d709a9:crates/ui-egui/src/preview.rs > crates/ui-egui/src/preview.rs
       - run: cargo build -p solidcraft --profile ci --locked
       - name: Capture original UI
         run: xvfb-run -a -s '-screen 0 1440x1000x24' python3 .github/hinge_evidence.py before

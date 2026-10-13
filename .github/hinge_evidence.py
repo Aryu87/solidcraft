@@ -37,6 +37,8 @@ def record(kind):
 
 try:
     for _ in range(120):
+        if app.poll() is not None:
+            raise RuntimeError((folder / 'app.log').read_text())
         try:
             call('ui.inspect')
             break
@@ -46,6 +48,12 @@ try:
     command('file.new', name='Hinge preview reproduction')
     command('component.create', name='Base')
     command('solid.box', length=120, width=80, height=6, body_name='Base')
+    # Enough separate keys to exercise the asynchronous preview on a normal
+    # multi-body laptop, rather than a two-box model whose worker finishes instantly.
+    for row in range(5):
+        for column in range(14):
+            command('solid.box', length=6, width=5, height=0.8,
+                    corner=[5+8*column,35+8*row,6.1], body_name=f'Key {row}-{column}')
     command('component.activate', component='root')
     command('component.create', name='Lid')
     command('solid.box', length=120, width=80, height=4, corner=[0,0,10], body_name='Lid')
