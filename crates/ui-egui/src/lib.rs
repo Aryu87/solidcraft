@@ -290,6 +290,9 @@ pub struct SolveApp {
     pub custom_titlebar: bool,
     /// macOS: the traffic lights sit over the application bar's left end.
     pub integrated_titlebar: bool,
+    /// Build bodies' display meshes on the CPU even where the GPU could (safe mode). Read by
+    /// [`SolveApp::set_wgpu`].
+    pub cpu_meshing: bool,
     pub frame_ms: f64,
     pub synthetic: Vec<egui::Event>,
     /// The modifiers of the synthetic press in progress (a Ctrl-drag keeps Ctrl while it moves).
@@ -357,6 +360,7 @@ impl SolveApp {
             autosave_minutes: 5.0,
             custom_titlebar: false,
             integrated_titlebar: false,
+            cpu_meshing: false,
             frame_ms: 0.0,
             synthetic: Vec::new(),
             synthetic_mods: egui::Modifiers::default(),
@@ -389,7 +393,7 @@ impl SolveApp {
     /// Draw the viewport on the GPU (eframe's wgpu render state, with the app's depth and
     /// stencil buffer bits and MSAA sample count). Without it the viewport renders on the CPU.
     pub fn set_wgpu(&mut self, rs: &egui_wgpu::RenderState, depth_bits: u8, stencil_bits: u8, samples: u32) {
-        self.viewport.gpu = Some(gpu::install(rs, depth_bits, stencil_bits, samples));
+        self.viewport.gpu = Some(gpu::install(rs, depth_bits, stencil_bits, samples, !self.cpu_meshing));
         self.msaa_supported = rs.msaa_supported.clone();
         let info = rs.adapter.get_info();
         self.help.gpu = Some(format!("{} ({:?}, {:?})", info.name.trim(), info.backend, info.device_type));
@@ -468,7 +472,7 @@ impl SolveApp {
         if let Some(t) = v.get("toolbar") {
             self.toolbar_custom.load(t);
         }
-        if let Some(mut p) = v.get("preferences").and_then(|p| serde_json::from_value::<prefs::Prefs>(p.clone()).ok()) {
+        if let Some(mut p) = v.get("preferences").filter(|p| p.is_object()).map(prefs::lenient) {
             if !prefs::MSAA.contains(&p.msaa) {
                 p.msaa = prefs::Prefs::default().msaa;
             }
