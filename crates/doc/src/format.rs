@@ -147,6 +147,9 @@
 //!   `pattern` and `body`): a perforation field stored on a sheet, for the flat pattern, the DXF
 //!   and the measure. It is also first saved in 20; 0.10.0 asks for an update instead of
 //!   meeting a feature it can't read.
+//!   The saved visibility can also list hidden assembly joints (`visibility.hidden_joints`,
+//!   joint ids): their glyphs aren't drawn, but they still constrain and drive the parts. A
+//!   design without it shows every joint, as it always did; 0.10.0 would show them all.
 
 use serde_json::Value;
 
