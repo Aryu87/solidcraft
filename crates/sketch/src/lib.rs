@@ -28,6 +28,7 @@ mod loci;
 mod model;
 mod offset;
 mod offset_topology;
+mod pattern;
 mod periodic;
 mod profiles;
 mod shape;
@@ -51,6 +52,7 @@ pub use model::{
 };
 pub use offset::OffsetChain;
 pub use offset_topology::{OffsetCreated, OffsetRole, OffsetRoleFlags, OffsetRoleKind, OffsetTopology};
+pub use pattern::{PatternInstance, SketchPattern, SketchPatternKind};
 pub use periodic::periodic_beziers;
 pub use profiles::{
     CurvePick, Profile, distinct_curves, find_drawn_profiles, find_profiles, merge_regions, profile_at_point, profile_by_curves,

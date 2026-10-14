@@ -1519,7 +1519,7 @@ fn flat_dxf_preserves_exact_cutout_entities() {
         outer: Loop2 { segs: vec![Seg2::Arc { center: Vec2::new(40.0, 30.0), radius: 5.0, start: -PI, sweep: -2.0 * PI }] },
         holes: Vec::new(),
     }];
-    let dxf = super::flat_dxf(&sh).unwrap();
+    let dxf = super::flat_dxf(&sh, super::DxfCurves::Exact).unwrap();
     assert_eq!(dxf.matches("0\nCIRCLE\n").count(), 1, "{dxf}");
     assert!(!dxf.contains("0\nARC\n"), "a full circle must not become a zero-length ARC");
     let read = solidcraft_io::read_dxf(&dxf).unwrap();
@@ -1531,10 +1531,10 @@ fn flat_dxf_preserves_exact_cutout_entities() {
             Seg2::Arc { center: Vec2::new(20.0, 10.0), radius: 10.0, start: 0.0, sweep: PI },
         ],
     };
-    let dxf = super::flat_dxf(&sh).unwrap();
+    let dxf = super::flat_dxf(&sh, super::DxfCurves::Exact).unwrap();
     assert_eq!(dxf.matches("0\nLINE\n").count(), 5, "four outline lines and one exact cutout line");
     assert_eq!(dxf.matches("0\nARC\n").count(), 1);
-    assert!(dxf.contains("50\n0.000000\n51\n180.000000\n"));
+    assert!(dxf.contains(" 50\n0.0\n 51\n180.0\n"), "{dxf}");
     let read = solidcraft_io::read_dxf(&dxf).unwrap();
     assert_eq!(read.len(), 6);
     assert!(read.iter().any(|g| matches!(g, solidcraft_io::Geom2::Arc { c, a, b } if *c == Vec2::new(20.0, 10.0) && a.dist(Vec2::new(30.0, 10.0)) < 1e-9 && b.dist(Vec2::new(10.0, 10.0)) < 1e-9)));
@@ -2921,7 +2921,11 @@ fn corner_reliefs_of_the_rule_reach_the_part_the_flat_pattern_and_the_dxf() {
                 assert!(arcs.iter().any(|(c, r)| c.dist(Vec2::new(x, y)) < 1e-6 && (r - 4.0).abs() < 1e-6), "({x}, {y}): {arcs:?}");
             }
         } else {
-            assert!(arcs.is_empty() && dxf.contains(&format!("{:.6}\n20\n{:.6}\n", s0 + 4.0, s0 + 4.0)), "{arcs:?}");
+            let corner = Vec2::new(s0 + 4.0, s0 + 4.0);
+            let read = solidcraft_io::read_dxf(&dxf).unwrap_or_default();
+            let at_corner =
+                |g: &solidcraft_io::Geom2| matches!(g, solidcraft_io::Geom2::Line(a, b) if a.dist(corner) < 1e-6 || b.dist(corner) < 1e-6);
+            assert!(arcs.is_empty() && read.iter().any(at_corner), "{arcs:?}");
         }
         // Unfold and refold keep it, and a cut made folded still goes through: a Ø20 hole in the base.
         run(&mut s, "sheet.unfold", json!({}));
@@ -2992,7 +2996,10 @@ fn a_tear_of_the_rule_reaches_the_part_the_flat_pattern_and_the_dxf() {
         // The DXF: the outline in straight lines, each cut one of them, and four bend lines.
         let dxf = run(&mut s, "sheet.export_dxf", json!({}))["dxf"].as_str().unwrap_or_default().to_string();
         assert_eq!(dxf.matches("0\nLINE\n").count(), outline.len() + 4, "{deg}");
-        assert!(dxf.contains(&format!("{:.6}\n20\n{:.6}\n", x_end(s0), s0 - ba)), "{deg}");
+        let cut_end = solidcraft_geom::Vec2::new(x_end(s0), s0 - ba);
+        let read = solidcraft_io::read_dxf(&dxf).unwrap_or_default();
+        let at_cut_end = |g: &solidcraft_io::Geom2| matches!(g, solidcraft_io::Geom2::Line(a, b) if a.dist(cut_end) < 1e-6 || b.dist(cut_end) < 1e-6);
+        assert!(read.iter().any(at_cut_end), "{deg}");
         // Unfold and refold keep it, and a cut made folded still goes through: a Ø20 hole in the base.
         run(&mut s, "sheet.unfold", json!({}));
         assert!((volume(&mut s) - flat0 - want).abs() < 1e-6, "{deg}: unfolded {} - {flat0} vs {want}", volume(&mut s));
