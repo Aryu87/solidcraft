@@ -134,7 +134,6 @@
   "ui.agent_chat_undo_label": "Agenten-Chat: {message}",
   "ui.agent_chat_limit": "Der Agent hat die Grenze von {limit} Änderungen für eine Nachricht erreicht. Senden Sie eine weitere Nachricht, damit er weitermacht.",
   "ui.agent_chat_refused": "Für den Agenten nicht erlaubt: {reason}",
-  "ui.agent_chat_wait_turn": "Der Agent arbeitet noch an der letzten Nachricht: Warten Sie oder klicken Sie auf Abbrechen.",
   "ui.agent_chat_placeholder": "Bitten Sie den Agenten, das Design zu ändern…",
   "ui.agent_chat_attach_view": "Ansicht anhängen",
   "ui.agent_chat_attach_view_tip": "Ein Bild der aktuellen Ansicht mit der Nachricht senden",

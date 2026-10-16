@@ -134,7 +134,6 @@
   "ui.agent_chat_undo_label": "에이전트 채팅: {message}",
   "ui.agent_chat_limit": "에이전트가 메시지당 변경 한도 {limit}에 도달했습니다. 계속하게 하려면 메시지를 하나 더 보내세요.",
   "ui.agent_chat_refused": "에이전트에게 허용되지 않음: {reason}",
-  "ui.agent_chat_wait_turn": "에이전트가 아직 이전 메시지를 처리 중입니다. 기다리거나 취소를 누르세요.",
   "ui.agent_chat_placeholder": "에이전트에게 디자인 변경을 요청하세요…",
   "ui.agent_chat_attach_view": "뷰 첨부",
   "ui.agent_chat_attach_view_tip": "현재 뷰의 이미지를 메시지와 함께 보냅니다",

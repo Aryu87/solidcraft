@@ -405,7 +405,6 @@
   "ui.agent_chat_undo_label": "Ajan sohbeti: {message}",
   "ui.agent_chat_limit": "Ajan, bir mesaj için {limit} değişiklik sınırına ulaştı. Devam etmesi için başka bir mesaj gönderin.",
   "ui.agent_chat_refused": "Ajan için izin verilmiyor: {reason}",
-  "ui.agent_chat_wait_turn": "Ajan hâlâ son mesaj üzerinde çalışıyor: Bekleyin veya İptal'e tıklayın.",
   "ui.agent_chat_placeholder": "Ajandan tasarımı değiştirmesini isteyin…",
   "ui.agent_chat_attach_view": "Görünümü ekle",
   "ui.agent_chat_attach_view_tip": "Geçerli görünümün bir resmini mesajla birlikte gönder",

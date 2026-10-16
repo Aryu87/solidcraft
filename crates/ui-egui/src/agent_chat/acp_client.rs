@@ -178,6 +178,14 @@ impl ChatBackend for AcpBackend {
         }
     }
 
+    fn new_session(&mut self) {
+        if self.pending.values().any(|p| *p == Pending::Prompt) {
+            self.cancel();
+        }
+        self.session = None;
+        self.new_session();
+    }
+
     fn answer_permission(&mut self, key: u64, option: Option<&str>) {
         if let Some(rpc) = self.permissions.remove(&key) {
             self.proc.send(&acp::permission_reply(rpc, option));

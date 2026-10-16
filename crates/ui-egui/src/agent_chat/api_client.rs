@@ -27,6 +27,8 @@ const MAX_HISTORY: usize = 240;
 const REQUEST_TIMEOUT_S: u64 = 300;
 /// How long one tool call may take (it may wait for the user's Allow).
 const TOOL_TIMEOUT: Duration = Duration::from_secs(330);
+/// How often a waiting request or tool call looks at the cancel flag.
+const CANCEL_POLL: Duration = Duration::from_millis(40);
 
 /// Tools the model is not offered.
 const HIDDEN_TOOLS: &[&str] = &["crash_reports"];
@@ -41,6 +43,7 @@ pub struct ApiConfig {
 
 enum Cmd {
     Prompt(Vec<PromptPart>),
+    NewChat,
 }
 
 pub struct ApiBackend {
@@ -90,6 +93,13 @@ impl ChatBackend for ApiBackend {
     fn cancel(&mut self) {
         self.cancel.store(true, Ordering::Relaxed);
     }
+    fn new_session(&mut self) {
+        // A running turn is cancelled; the worker resets the history once it has ended.
+        self.cancel.store(true, Ordering::Relaxed);
+        if let Some(c) = &self.cmds {
+            let _ = c.send(Cmd::NewChat);
+        }
+    }
     fn answer_permission(&mut self, _key: u64, _option: Option<&str>) {}
     fn authenticate(&mut self, _method: &str) {}
     fn pid(&self) -> Option<u32> {
@@ -137,6 +147,11 @@ impl Worker {
         for cmd in cmds {
             match cmd {
                 Cmd::Prompt(parts) => self.turn(parts),
+                Cmd::NewChat => {
+                    self.history.truncate(1);
+                    self.cancel.store(false, Ordering::Relaxed);
+                    self.emit(Event::Ready { agent: format!("{} · {}", self.cfg.name, self.cfg.model), images: true });
+                }
             }
         }
         if let Some(mut m) = self.mcp.take() {
@@ -152,7 +167,12 @@ impl Worker {
         m.send(&json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}));
         let deadline = std::time::Instant::now() + TOOL_TIMEOUT;
         loop {
-            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            // Wait in short slices so Stop and Send now do not wait for a slow tool: its late
+            // answer is skipped later (its id no longer matches).
+            if self.cancel.load(Ordering::Relaxed) {
+                return Err("cancelled by the user".into());
+            }
+            let left = deadline.saturating_duration_since(std::time::Instant::now()).min(CANCEL_POLL);
             match m.from_agent.recv_timeout(left) {
                 Ok(FromAgent::Line(l)) => {
                     let Ok(v) = serde_json::from_str::<Value>(l.trim()) else { continue };
@@ -165,6 +185,7 @@ impl Worker {
                     return Ok(v.get("result").cloned().unwrap_or(Value::Null));
                 }
                 Ok(FromAgent::Exited(_)) => return Err("the SolidCraft tools stopped".into()),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) if std::time::Instant::now() < deadline => {}
                 Err(_) => return Err("the SolidCraft tools did not answer".into()),
             }
         }
@@ -196,12 +217,25 @@ impl Worker {
             self.history.remove(1);
         }
         for _ in 0..MAX_REQUESTS_PER_TURN {
+            // The history as of here is complete (every tool call answered): a cancelled request
+            // goes back to it, so no half-finished round is left to confuse the next message.
+            let sound = self.history.len();
             if self.cancel.load(Ordering::Relaxed) {
                 self.emit(Event::TurnEnded { reason: "cancelled".into() });
                 return;
             }
             let reply = match self.request() {
+                Ok(_) if self.cancel.load(Ordering::Relaxed) => {
+                    self.history.truncate(sound);
+                    self.emit(Event::TurnEnded { reason: "cancelled".into() });
+                    return;
+                }
                 Ok(r) => r,
+                Err(_) if self.cancel.load(Ordering::Relaxed) => {
+                    self.history.truncate(sound);
+                    self.emit(Event::TurnEnded { reason: "cancelled".into() });
+                    return;
+                }
                 Err(e) => {
                     self.emit(Event::Error(e));
                     self.emit(Event::TurnEnded { reason: "error".into() });
@@ -282,7 +316,23 @@ impl Worker {
             body: Some(body.to_string().into_bytes()),
             timeout_s: REQUEST_TIMEOUT_S,
         };
-        let (status, bytes) = (self.cfg.http)(&req)?;
+        // The request runs on a thread of its own so that Stop does not wait for the model: a
+        // cancelled one is abandoned (the host's own timeout ends it) and its answer dropped.
+        let (tx, rx) = channel();
+        let http = self.cfg.http.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(http(&req));
+        });
+        let (status, bytes) = loop {
+            if self.cancel.load(Ordering::Relaxed) {
+                return Err("cancelled by the user".into());
+            }
+            match rx.recv_timeout(CANCEL_POLL) {
+                Ok(r) => break r?,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(_) => return Err("the request ended without an answer".into()),
+            }
+        };
         let v: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
         if status != 200 {
             return Err(http_error(status, &v));
@@ -491,6 +541,96 @@ mod tests {
         let sent = seen.lock().unwrap();
         assert_eq!(sent.len(), 2);
         assert_eq!(sent[1]["messages"].as_array().unwrap().last().unwrap()["role"], "tool");
+        b.shutdown(true);
+    }
+
+    /// Cancel while a model request is in flight ends the turn at once (the request is
+    /// abandoned, its late answer dropped), leaves no half-finished round in the history and
+    /// the next message goes through.
+    #[test]
+    fn cancelling_a_request_ends_the_turn_and_the_next_message_still_works() {
+        let (release_tx, release_rx) = channel::<()>();
+        let release_rx = std::sync::Mutex::new(release_rx);
+        let seen = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let log = seen.clone();
+        let http: HttpFn = Arc::new(move |r: &HttpRequest| {
+            let n = {
+                let mut l = log.lock().unwrap();
+                l.push(serde_json::from_slice(r.body.as_deref().unwrap_or(b"null")).unwrap());
+                l.len()
+            };
+            if n == 1 {
+                // The first request hangs until the test lets it go, then answers late.
+                let _ = release_rx.lock().unwrap().recv_timeout(Duration::from_secs(20));
+                return Ok((200, json!({"choices": [{"message": {"role": "assistant", "content": "Too late."}}]}).to_string().into_bytes()));
+            }
+            Ok((200, json!({"choices": [{"message": {"role": "assistant", "content": "Steered."}}]}).to_string().into_bytes()))
+        });
+        let cfg = ApiConfig { name: "Test".into(), base_url: "http://localhost:1/v1".into(), model: "m".into(), key: None, http };
+        let ctx = StartContext { cwd: std::env::temp_dir(), bridge: None, tools: None, wake: Box::new(|| {}) };
+        let mut b = ApiBackend::start(cfg, ctx).unwrap();
+        let wait = |b: &mut ApiBackend, events: &mut Vec<Event>| {
+            let start = std::time::Instant::now();
+            while !events.iter().any(|e| matches!(e, Event::TurnEnded { .. })) && start.elapsed() < Duration::from_secs(10) {
+                events.extend(b.poll());
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        b.prompt(&[PromptPart::Text("long job".into())]);
+        let start = std::time::Instant::now();
+        while seen.lock().unwrap().is_empty() && start.elapsed() < Duration::from_secs(10) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        b.cancel();
+        let mut events = Vec::new();
+        wait(&mut b, &mut events);
+        assert!(start.elapsed() < Duration::from_secs(8), "the turn ended while the request still hung");
+        assert!(matches!(events.last(), Some(Event::TurnEnded { reason }) if reason == "cancelled"), "{events:?}");
+        assert!(!events.iter().any(|e| matches!(e, Event::Text { .. } | Event::Error(_))), "{events:?}");
+        // The next message is answered, and the late answer of the first never shows up.
+        b.prompt(&[PromptPart::Text("[interrupted] do this instead".into())]);
+        let mut events = Vec::new();
+        wait(&mut b, &mut events);
+        let _ = release_tx.send(());
+        assert!(events.iter().any(|e| matches!(e, Event::Text { text, .. } if text == "Steered.")), "{events:?}");
+        assert!(matches!(events.last(), Some(Event::TurnEnded { reason }) if reason.is_empty()), "{events:?}");
+        let sent = seen.lock().unwrap();
+        let roles: Vec<&str> = sent[1]["messages"].as_array().unwrap().iter().map(|m| m["role"].as_str().unwrap_or("")).collect();
+        assert_eq!(roles, ["system", "user", "user"], "no reply or tool call of the cancelled round is left");
+        b.shutdown(true);
+    }
+
+    /// New chat resets the model's history to the system note: the next request carries nothing
+    /// of the conversation before it.
+    #[test]
+    fn a_new_chat_resets_the_history_to_the_system_note() {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let log = seen.clone();
+        let http: HttpFn = Arc::new(move |r: &HttpRequest| {
+            log.lock().unwrap().push(serde_json::from_slice(r.body.as_deref().unwrap_or(b"null")).unwrap());
+            Ok((200, json!({"choices": [{"message": {"role": "assistant", "content": "ok"}}]}).to_string().into_bytes()))
+        });
+        let cfg = ApiConfig { name: "Test".into(), base_url: "http://localhost:1/v1".into(), model: "m".into(), key: None, http };
+        let ctx = StartContext { cwd: std::env::temp_dir(), bridge: None, tools: None, wake: Box::new(|| {}) };
+        let mut b = ApiBackend::start(cfg, ctx).unwrap();
+        let run = |b: &mut ApiBackend, f: &dyn Fn(&mut ApiBackend), want: usize| {
+            f(b);
+            let mut events = Vec::new();
+            let start = std::time::Instant::now();
+            while events.iter().filter(|e| matches!(e, Event::TurnEnded { .. } | Event::Ready { .. })).count() < want
+                && start.elapsed() < Duration::from_secs(10)
+            {
+                events.extend(b.poll());
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        run(&mut b, &|b| b.prompt(&[PromptPart::Text("one".into())]), 2);
+        run(&mut b, &|b| b.new_session(), 1);
+        run(&mut b, &|b| b.prompt(&[PromptPart::Text("two".into())]), 1);
+        let sent = seen.lock().unwrap();
+        let roles: Vec<&str> = sent[1]["messages"].as_array().unwrap().iter().map(|m| m["role"].as_str().unwrap_or("")).collect();
+        assert_eq!(roles, ["system", "user"]);
+        assert_eq!(sent[1]["messages"][1]["content"], "two");
         b.shutdown(true);
     }
 

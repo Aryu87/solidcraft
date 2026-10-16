@@ -69,6 +69,9 @@ pub trait ChatBackend {
     fn prompt(&mut self, parts: &[PromptPart]);
     /// Stop the message being answered; open permission questions count as cancelled.
     fn cancel(&mut self);
+    /// Start a fresh conversation on the running backend (no restart); [`Event::Ready`] follows.
+    /// A message being answered is cancelled first.
+    fn new_session(&mut self);
     /// Answer an [`Event::Permission`] with one of its options (`None`: cancelled).
     fn answer_permission(&mut self, key: u64, option: Option<&str>);
     /// Ask the backend to sign in by itself with one of its methods (it opens the browser).

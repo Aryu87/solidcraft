@@ -145,6 +145,13 @@ struct Turn {
     label: String,
 }
 
+/// A message typed while the agent works: shown in the transcript as "Queued" until it is sent.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Pending {
+    pub text: String,
+    pub image: bool,
+}
+
 /// A request held for Allow or Deny.
 struct Held {
     id: u64,
@@ -171,6 +178,25 @@ pub struct AgentChat {
     auth_status: Option<String>,
     /// A message typed before the agent was ready.
     queued: Option<(String, bool)>,
+    /// Messages typed while the agent works, in order. They go as one prompt when the turn ends
+    /// (or at once with Send now); after Stop they wait for Send.
+    pub pending: Vec<Pending>,
+    /// The queued message being edited, and its text so far.
+    pub pending_edit: Option<(usize, String)>,
+    /// Send now was pressed: the queue goes as soon as the cancelled turn has ended.
+    steering: bool,
+    /// The turn was stopped: its queue is not sent by itself.
+    stopped: bool,
+    /// Why the last turn ended.
+    ended: Option<String>,
+    /// New chat while a message ran: its late end is not reported.
+    discard_end: bool,
+    /// The mode to put back when the fresh session is ready.
+    restore_mode: Option<String>,
+    /// New chat is waiting for the user's yes (a message is running or queued).
+    pub confirm_new: bool,
+    /// Where the panel was drawn last (for its shortcuts).
+    pub panel_rect: Option<egui::Rect>,
     /// The last message sent, kept to send again after a sign-in.
     last: Option<(String, bool)>,
     /// The command the running agent was started with.
@@ -227,6 +253,7 @@ impl AgentChat {
     }
 
     fn stop_backend(&mut self, wait: bool) {
+        self.steering = false;
         if let Some(mut b) = self.backend.take() {
             b.cancel();
             b.shutdown(wait);
@@ -275,6 +302,14 @@ impl AgentChat {
                 self.images = images;
                 self.state = Some(State::Ready);
                 self.picking = Some(false);
+                // Keep the mode across a new chat.
+                if let Some(m) = self.restore_mode.take()
+                    && self.modes.iter().any(|(id, _)| *id == m)
+                    && let Some(b) = self.backend.as_mut()
+                {
+                    b.set_mode(&m);
+                    self.mode = m;
+                }
             }
             Event::Text { thought, text } => {
                 if let Some(Item::Agent { thought: t, text: last }) = self.items.last_mut()
@@ -334,6 +369,10 @@ impl AgentChat {
                 if self.state() == State::Busy {
                     self.state = Some(State::Ready);
                 }
+                self.ended = Some(reason.clone());
+                if std::mem::take(&mut self.discard_end) {
+                    return Some(Outcome::TurnEnd);
+                }
                 if !matches!(reason.as_str(), "" | "auth" | "error") {
                     self.notice(format!("({reason})"), false);
                 }
@@ -347,6 +386,7 @@ impl AgentChat {
             }
             Event::Exited { tail } => {
                 self.state = Some(State::Exited);
+                self.steering = false;
                 let last: Vec<String> = tail.into_iter().rev().take(6).collect::<Vec<_>>().into_iter().rev().collect();
                 let detail = if last.is_empty() { String::new() } else { format!("\n{}", last.join("\n")) };
                 self.notice(format!("{}{detail}", tr("ui.agent_chat_exited")), true);
@@ -496,17 +536,44 @@ pub fn shutdown(app: &mut SolveApp) {
     app.agent_chat.stop_backend(true);
 }
 
-/// Send what the user typed: now if the agent is ready, else once it is (starting it if needed).
+/// Most messages waiting in the queue.
+const MAX_PENDING: usize = 20;
+/// Said to the agent before a message that interrupted it, so it knows its last step may be
+/// incomplete.
+const INTERRUPT_NOTE: &str = "[The user interrupted your previous step.]";
+
+/// Send what the user typed: now if the agent is ready, queued behind the running message if it
+/// is working, else once it is ready (starting it if needed).
 pub fn send(app: &mut SolveApp, ctx: &egui::Context, text: String) {
     let text: String = text.chars().take(MAX_PROMPT).collect();
     if text.trim().is_empty() {
         return;
     }
     let image = app.agent_chat.attach_view && app.agent_chat.images;
+    if app.agent_chat.state() == State::Busy {
+        let chat = &mut app.agent_chat;
+        if chat.pending.len() >= MAX_PENDING {
+            chat.notice(tr("ui.agent_chat_queue_full"), false);
+        } else {
+            chat.pending.push(Pending { text, image });
+        }
+        return;
+    }
+    // Messages left waiting by Stop go first, in one prompt with this one.
+    if !app.agent_chat.pending.is_empty() {
+        app.agent_chat.pending.push(Pending { text, image });
+        send_queue(app, ctx, false);
+        return;
+    }
+    submit(app, ctx, text, image, false);
+}
+
+/// Put `text` in the conversation and send it (`interrupted`: the agent is told it cut in on its
+/// previous step).
+fn submit(app: &mut SolveApp, ctx: &egui::Context, text: String, image: bool, interrupted: bool) {
     app.agent_chat.push(Item::User { text: text.clone(), image });
     match app.agent_chat.state() {
-        State::Ready => start_turn(app, text, image),
-        State::Busy => app.agent_chat.notice(tr("ui.agent_chat_wait_turn"), false),
+        State::Ready => start_turn_with(app, text, image, interrupted.then_some(INTERRUPT_NOTE)),
         s => {
             app.agent_chat.queued = Some((text, image));
             #[cfg(not(target_arch = "wasm32"))]
@@ -519,8 +586,105 @@ pub fn send(app: &mut SolveApp, ctx: &egui::Context, text: String) {
     }
 }
 
+/// Send the queued messages as one prompt, in order.
+fn send_queue(app: &mut SolveApp, ctx: &egui::Context, interrupted: bool) {
+    let chat = &mut app.agent_chat;
+    chat.pending_edit = None;
+    if chat.pending.is_empty() {
+        return;
+    }
+    let all = std::mem::take(&mut chat.pending);
+    let image = all.iter().any(|p| p.image);
+    let text = all.into_iter().map(|p| p.text).collect::<Vec<_>>().join("\n\n");
+    let text: String = text.chars().take(MAX_PROMPT).collect();
+    submit(app, ctx, text, image, interrupted);
+}
+
+/// Send now: stop the running step and send the queue as the next prompt once the agent has said
+/// it stopped (its note tells the agent it was interrupted). With nothing running, sends the queue.
+pub fn send_now(app: &mut SolveApp, ctx: &egui::Context) {
+    if app.agent_chat.pending.is_empty() {
+        return;
+    }
+    if app.agent_chat.state() == State::Busy {
+        app.agent_chat.steering = true;
+        app.agent_chat.stopped = false;
+        interrupt(app);
+    } else {
+        send_queue(app, ctx, false);
+    }
+}
+
+/// New chat: stop what runs (as Stop does), clear the conversation and the queue, and start a
+/// fresh session on the same agent (no restart); the agent and its mode stay, the design's undo
+/// history is untouched.
+pub fn new_chat(app: &mut SolveApp) {
+    let running = app.agent_chat.state() == State::Busy;
+    if running {
+        cancel(app);
+    }
+    decline_all(app, "the chat was cleared");
+    end_turn(app);
+    let chat = &mut app.agent_chat;
+    chat.confirm_new = false;
+    chat.items.clear();
+    chat.pending.clear();
+    chat.pending_edit = None;
+    chat.queued = None;
+    chat.last = None;
+    chat.steering = false;
+    chat.stopped = false;
+    chat.ended = None;
+    chat.discard_end = running;
+    if matches!(chat.state(), State::Ready | State::Busy) {
+        chat.restore_mode = Some(chat.mode.clone()).filter(|m| !m.is_empty());
+        chat.state = Some(State::Starting);
+        if let Some(b) = chat.backend.as_mut() {
+            b.new_session();
+        }
+    }
+}
+
+/// Whether New chat would throw something away that the user may want (so it asks first).
+pub fn new_chat_needs_confirm(app: &SolveApp) -> bool {
+    app.agent_chat.state() == State::Busy || !app.agent_chat.pending.is_empty()
+}
+
+/// Take a queued message out of the queue.
+pub fn remove_pending(app: &mut SolveApp, index: usize) {
+    let chat = &mut app.agent_chat;
+    if index < chat.pending.len() {
+        chat.pending.remove(index);
+    }
+    chat.pending_edit = None;
+}
+
+/// The turn ended: the queue goes on its own after a normal end, and after a Send now; not after
+/// Stop, a sign-in request or an error.
+fn after_turn(app: &mut SolveApp, ctx: &egui::Context) {
+    let reason = app.agent_chat.ended.take().unwrap_or_default();
+    let steering = std::mem::take(&mut app.agent_chat.steering);
+    if app.agent_chat.state() != State::Ready || app.agent_chat.pending.is_empty() {
+        return;
+    }
+    if steering && !matches!(reason.as_str(), "auth" | "error") {
+        send_queue(app, ctx, reason == "cancelled");
+    } else if !app.agent_chat.stopped && reason.is_empty() {
+        send_queue(app, ctx, false);
+    }
+}
+
 fn start_turn(app: &mut SolveApp, text: String, image: bool) {
-    let mut parts = vec![PromptPart::Text(text.clone())];
+    start_turn_with(app, text, image, None);
+}
+
+/// Start a message; `note` goes before the text for the agent, not into the conversation.
+fn start_turn_with(app: &mut SolveApp, text: String, image: bool, note: Option<&str>) {
+    let sent = match note {
+        Some(n) => format!("{n}\n\n{text}"),
+        None => text.clone(),
+    };
+    let mut parts = vec![PromptPart::Text(sent)];
     if image && let Some(png) = crate::control::view_png(app, VIEW_IMAGE.0, VIEW_IMAGE.1) {
         parts.push(PromptPart::Image { mime: "image/png".into(), base64: backend::base64(&png) });
     }
@@ -529,13 +693,24 @@ fn start_turn(app: &mut SolveApp, text: String, image: bool) {
         Some(Turn { start_doc: app.session.doc.clone(), start_undo: app.session.undo.len(), changes: 0, requests: 0, limit_told: false, label });
     app.agent_chat.last = Some((text, image));
     app.agent_chat.state = Some(State::Busy);
+    app.agent_chat.stopped = false;
+    app.agent_chat.steering = false;
+    app.agent_chat.ended = None;
     if let Some(b) = app.agent_chat.backend.as_mut() {
         b.prompt(&parts);
     }
 }
 
-/// Ask the agent to stop the message it is on; requests waiting for approval are declined.
+/// Stop: ask the agent to stop the message it is on; requests waiting for approval are declined.
+/// Messages queued meanwhile stay queued (they wait for Send).
 pub fn cancel(app: &mut SolveApp) {
+    app.agent_chat.steering = false;
+    app.agent_chat.stopped = true;
+    interrupt(app);
+}
+
+/// Ask the agent to stop the message it is on and decline what waits for approval.
+fn interrupt(app: &mut SolveApp) {
     decline_all(app, "the user stopped the message");
     if let Some(b) = app.agent_chat.backend.as_mut() {
         b.cancel();
@@ -772,7 +947,10 @@ pub fn poll(app: &mut SolveApp, ctx: &egui::Context) {
     for e in events {
         let ready = matches!(e, Event::Ready { .. });
         match app.agent_chat.on_event(e) {
-            Some(Outcome::TurnEnd) => end_turn(app),
+            Some(Outcome::TurnEnd) => {
+                end_turn(app);
+                after_turn(app, ctx);
+            }
             Some(Outcome::Permission { key, title, options }) => on_permission(app, key, title, options),
             None => {}
         }
@@ -814,7 +992,7 @@ pub fn set_mode(app: &mut SolveApp, mode: &str) {
 /// `ui.agent_chat` on the control channel (tests and screenshots): `enabled`, `command`, `open`,
 /// `side`, `minimized`, `width`, `refresh`, `connect`, `stop`, `send`, `attach_view`,
 /// `permission` (an option id, or `"cancel"`), `approve` (`true`/`false`, the oldest held
-/// request), `cancel`, `undo` (the newest message's changes); returns the panel's state.
+/// request), `cancel` (Stop), `send_now` (steer: stop, then send the queue), `remove_pending` (index), `undo` (the newest message's changes); returns the panel's state.
 pub fn control(app: &mut SolveApp, ctx: &egui::Context, p: &Value) -> Result<Value, String> {
     if let Some(e) = p.get("features").and_then(Value::as_bool) {
         app.preferences.ai_features = e;
@@ -929,6 +1107,15 @@ pub fn control(app: &mut SolveApp, ctx: &egui::Context, p: &Value) -> Result<Val
     if p.get("cancel").and_then(Value::as_bool) == Some(true) {
         cancel(app);
     }
+    if p.get("new_chat").and_then(Value::as_bool) == Some(true) {
+        new_chat(app);
+    }
+    if p.get("send_now").and_then(Value::as_bool) == Some(true) {
+        send_now(app, ctx);
+    }
+    if let Some(n) = p.get("remove_pending").and_then(Value::as_u64) {
+        remove_pending(app, n as usize);
+    }
     if p.get("undo").and_then(Value::as_bool) == Some(true) {
         let Some(n) = app.agent_chat.items.iter().rposition(|i| matches!(i, Item::Changes { .. })) else { return Err("no changes to undo".into()) };
         undo_changes(app, n);
@@ -987,6 +1174,8 @@ pub fn status(app: &SolveApp) -> Value {
         "toolsPort": c.tools_port,
         "pid": pid,
         "waiting": c.waiting(),
+        "pending": c.pending.iter().map(|p| json!({"text": p.text, "image": p.image})).collect::<Vec<_>>(),
+        "stopped": c.stopped,
         "turn": c.turn.as_ref().map(|t| json!({"changes": t.changes, "requests": t.requests})),
         "detection": detection,
         "items": items,

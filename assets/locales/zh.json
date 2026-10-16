@@ -422,7 +422,6 @@
   "ui.agent_chat_undo_label": "智能体聊天：{message}",
   "ui.agent_chat_limit": "智能体已达到每条消息 {limit} 项更改的上限。再发送一条消息可让它继续。",
   "ui.agent_chat_refused": "不允许智能体执行：{reason}",
-  "ui.agent_chat_wait_turn": "智能体仍在处理上一条消息：请等待或点击取消。",
   "ui.agent_chat_placeholder": "让智能体修改设计…",
   "ui.agent_chat_attach_view": "附加视图",
   "ui.agent_chat_attach_view_tip": "随消息发送当前视图的图片",

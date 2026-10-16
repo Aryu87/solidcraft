@@ -422,7 +422,6 @@
   "ui.agent_chat_undo_label": "エージェントチャット: {message}",
   "ui.agent_chat_limit": "エージェントが1メッセージあたりの変更上限 {limit} に達しました。続けさせるには、もう一度メッセージを送ってください。",
   "ui.agent_chat_refused": "エージェントには許可されていません: {reason}",
-  "ui.agent_chat_wait_turn": "エージェントはまだ前のメッセージを処理中です。待つか「キャンセル」を押してください。",
   "ui.agent_chat_placeholder": "デザインの変更をエージェントに依頼…",
   "ui.agent_chat_attach_view": "ビューを添付",
   "ui.agent_chat_attach_view_tip": "現在のビューの画像をメッセージと一緒に送ります",
