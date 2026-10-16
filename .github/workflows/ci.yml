@@ -317,6 +317,32 @@ jobs:
           cargo nextest run --archive-file tests.tar.zst --workspace-remap . --extract-to . --extract-overwrite \
             --profile ci --success-output final --run-ignored only -E "binary(action_matrix) & test(=action_matrix_determinism)"
 
+  property-tests:
+    # The boolean property tests and the atomic command tests with many cases. Pull requests skip
+    # them (.config/nextest.toml); pushes to main run them with small defaults (8 cases, seeds 0..4).
+    name: Property tests (many cases)
+    needs: build-tests
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        with:
+          tool: cargo-nextest
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: nextest-archive
+      - name: Boolean properties and atomic commands
+        # The defaults (8 cases, seeds 0..4) take 159 s and 802 s on a 2-core VM; four times the
+        # cases and twice the seeds are estimated at about 40 minutes there (not yet timed on CI).
+        env:
+          PROPTEST_CASES: "32"
+          ATOMIC_SEEDS: "0..8"
+        run: |
+          cargo nextest run --archive-file tests.tar.zst --workspace-remap . --extract-to . --extract-overwrite \
+            --profile ci --ignore-default-filter --success-output final -E "binary(boolean_props) | binary(atomic_commands)"
+
   doc-tests:
     name: Doc tests
     needs: changes

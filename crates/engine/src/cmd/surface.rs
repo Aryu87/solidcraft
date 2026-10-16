@@ -5,6 +5,8 @@ use serde_json::Value;
 use solidcraft_doc::{
     BlendSide, EdgeContinuity, ExtendMode, ExtendTo, FaceAt, FeatureKind, PatchContinuity, PlaneRef, ProfileSel, RuledCorners, RuledMode, expr::Kind,
 };
+use solidcraft_doc::{BodyName, SketchId};
+use solidcraft_doc::{Dir, FacePick, Position};
 use solidcraft_kernel::Continuity;
 
 use super::CommandSpec;
@@ -87,14 +89,26 @@ fn patch(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "surface.patch";
     let crown = crown_param(p, cmd)?;
     let continuity = patch_continuity(p, cmd)?;
-    let points = patch_points(p, cmd)?;
+    let points: Vec<Position> = patch_points(p, cmd)?.into_iter().map(Position).collect();
     let edges: Vec<solidcraft_geom::Vec3> = p.get("edges").and_then(Value::as_array).map(|a| a.iter().filter_map(vec3).collect()).unwrap_or_default();
     let mut v = if !edges.is_empty() {
         if edges.len() > 10_000 {
             return Err(bad(cmd, "too many edges"));
         }
         let body = str_(p, "body").map(str::to_string);
-        add_feature(s, p, FeatureKind::Patch { sketch: None, profiles: ProfileSel::All, body, edges, crown, continuity: continuity.clone(), points })?
+        add_feature(
+            s,
+            p,
+            FeatureKind::Patch {
+                sketch: None,
+                profiles: ProfileSel::All,
+                body: body.map(BodyName),
+                edges: edges.into_iter().map(Position).collect(),
+                crown,
+                continuity: continuity.clone(),
+                points,
+            },
+        )?
     } else {
         if !continuity.is_g0() || !points.is_empty() {
             return Err(bad(cmd, "`continuity` and `points` are for a patch on a loop of edges"));
@@ -102,7 +116,7 @@ fn patch(s: &mut Session, p: &Value) -> Result<Value> {
         let sketch = feature_sketch(s, p, cmd)?;
         let profiles = profiles(p, cmd)?;
         let kind = FeatureKind::Patch {
-            sketch: Some(sketch),
+            sketch: Some(SketchId(sketch)),
             profiles,
             body: None,
             edges: Vec::new(),
@@ -138,7 +152,7 @@ fn patch_continuity(p: &Value, cmd: &str) -> Result<PatchContinuity> {
         list.iter()
             .map(|e| {
                 let edge = e.get("edge").and_then(vec3).ok_or_else(|| bad(cmd, "a `continuity` entry's `edge` must be a point [x,y,z]"))?;
-                Ok(EdgeContinuity { edge, g: patch_order(e.get("g"), cmd)? })
+                Ok(EdgeContinuity { edge: Position(edge), g: patch_order(e.get("g"), cmd)? })
             })
             .collect()
     };
@@ -192,7 +206,7 @@ fn blend_side(p: &Value, cmd: &str, key: &str) -> Result<BlendSide> {
     if edges.is_empty() || edges.len() > 10_000 {
         return Err(bad(cmd, format!("`{key}.edges` must list 1 to 10000 points on the edges of a chain")));
     }
-    Ok(BlendSide { body: body.to_string(), edges })
+    Ok(BlendSide { body: BodyName(body.to_string()), edges: edges.into_iter().map(Position).collect() })
 }
 
 /// `surface.blend`: a blend surface bridging two picked edge chains of two bodies.
@@ -229,7 +243,7 @@ fn blend(s: &mut Session, p: &Value) -> Result<Value> {
             let point = |x: Option<&Value>| -> Result<solidcraft_geom::Vec3> {
                 x.and_then(vec3).ok_or_else(|| bad(cmd, "each `align` entry must be a point [x,y,z]"))
             };
-            Some([point(list.first())?, point(list.get(1))?])
+            Some([Position(point(list.first())?), Position(point(list.get(1))?)])
         }
     };
     let stitch = bool_(p, "stitch").unwrap_or(false);
@@ -244,7 +258,7 @@ fn surface_extrude(s: &mut Session, p: &Value) -> Result<Value> {
     if extent.through_all || extent.taper.is_some() || extent.to.is_some() || extent.from.is_some() {
         return Err(bad(cmd, "not supported yet: through all, to or from an object, or a taper"));
     }
-    add_feature(s, p, FeatureKind::SurfaceExtrude { sketch, profiles, curves, extent })
+    add_feature(s, p, FeatureKind::SurfaceExtrude { sketch: SketchId(sketch), profiles, curves, extent })
 }
 
 /// A body by name, and points on some of its faces (none: all of them).
@@ -262,12 +276,12 @@ fn body_faces(s: &Session, p: &Value, cmd: &str) -> Result<(String, Vec<solidcra
 
 fn unstitch(s: &mut Session, p: &Value) -> Result<Value> {
     let (body, faces) = body_faces(s, p, "surface.unstitch")?;
-    add_feature(s, p, FeatureKind::Unstitch { body, faces })
+    add_feature(s, p, FeatureKind::Unstitch { body: BodyName(body), faces: faces.into_iter().map(Position).collect() })
 }
 
 fn reverse_normal(s: &mut Session, p: &Value) -> Result<Value> {
     let (body, faces) = body_faces(s, p, "surface.reverse_normal")?;
-    add_feature(s, p, FeatureKind::ReverseNormal { body, faces })
+    add_feature(s, p, FeatureKind::ReverseNormal { body: BodyName(body), faces: faces.into_iter().map(Position).collect() })
 }
 
 fn untrim(s: &mut Session, p: &Value) -> Result<Value> {
@@ -294,7 +308,12 @@ fn untrim(s: &mut Session, p: &Value) -> Result<Value> {
     if !outer && holes.as_ref().is_some_and(Vec::is_empty) {
         return Err(bad(cmd, "nothing to untrim: pick holes to remove or restore the outer boundary"));
     }
-    let kind = FeatureKind::SurfaceUntrim { face: FaceAt { body, point }, holes, outer, in_place: bool_(p, "in_place").unwrap_or(false) };
+    let kind = FeatureKind::SurfaceUntrim {
+        face: FaceAt { body: BodyName(body), point: Position(point) },
+        holes: holes.map(|h| h.into_iter().map(Position).collect()),
+        outer,
+        in_place: bool_(p, "in_place").unwrap_or(false),
+    };
     add_feature(s, p, kind)
 }
 
@@ -321,7 +340,7 @@ fn surface_revolve(s: &mut Session, p: &Value) -> Result<Value> {
         check_expr(s, a, Kind::Angle, cmd, "angle2")?;
     }
     let symmetric = bool_(p, "symmetric").unwrap_or(false) || str_(p, "direction").is_some_and(|d| d.eq_ignore_ascii_case("symmetric"));
-    add_feature(s, p, FeatureKind::SurfaceRevolve { sketch, profiles, curves, axis, angle, angle2, symmetric })
+    add_feature(s, p, FeatureKind::SurfaceRevolve { sketch: SketchId(sketch), profiles, curves, axis, angle, angle2, symmetric })
 }
 
 fn surface_sweep(s: &mut Session, p: &Value) -> Result<Value> {
@@ -334,7 +353,11 @@ fn surface_sweep(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(cmd, "`path` must list 1…1000 curve ids"));
     }
     let (orientation, twist, scale) = super::features::sweep_options(s, p, cmd)?;
-    add_feature(s, p, FeatureKind::SurfaceSweep { sketch, profiles, curves, path_sketch, path, orientation, twist, scale })
+    add_feature(
+        s,
+        p,
+        FeatureKind::SurfaceSweep { sketch: SketchId(sketch), profiles, curves, path_sketch: SketchId(path_sketch), path, orientation, twist, scale },
+    )
 }
 
 fn surface_loft(s: &mut Session, p: &Value) -> Result<Value> {
@@ -351,7 +374,7 @@ fn surface_loft(s: &mut Session, p: &Value) -> Result<Value> {
             return Err(bad(cmd, "at most 1000 curves a section"));
         }
         let profiles = if sec.get("profiles").is_some() { Some(profiles(sec, cmd)?) } else { None };
-        sections.push(solidcraft_doc::SheetSection { sketch, profiles, curves });
+        sections.push(solidcraft_doc::SheetSection { sketch: SketchId(sketch), profiles, curves });
     }
     add_feature(s, p, FeatureKind::SurfaceLoft { sections })
 }
@@ -369,8 +392,8 @@ fn offset(s: &mut Session, p: &Value) -> Result<Value> {
         check_expr(s, t, Kind::Length, cmd, "tolerance")?;
     }
     let kind = FeatureKind::SurfaceOffset {
-        faces,
-        body: str_(p, "body").map(str::to_string),
+        faces: faces.into_iter().map(FacePick).collect(),
+        body: str_(p, "body").map(BodyName::from),
         distance,
         chain: bool_(p, "chain").unwrap_or(false),
         tolerance,
@@ -422,7 +445,17 @@ fn ruled(s: &mut Session, p: &Value) -> Result<Value> {
         Some(v) => Some(vec3(v).ok_or_else(|| bad(cmd, "`face` must be [x, y, z] on a face"))?),
         None => None,
     };
-    let kind = FeatureKind::SurfaceRuled { body, edges, distance, mode, angle, direction, flip: bool_(p, "flip").unwrap_or(false), corners, face };
+    let kind = FeatureKind::SurfaceRuled {
+        body: BodyName(body),
+        edges: edges.into_iter().map(Position).collect(),
+        distance,
+        mode,
+        angle,
+        direction: direction.map(Dir),
+        flip: bool_(p, "flip").unwrap_or(false),
+        corners,
+        face: face.map(FacePick),
+    };
     add_feature(s, p, kind)
 }
 
@@ -443,7 +476,7 @@ fn stitch(s: &mut Session, p: &Value) -> Result<Value> {
     let bodies = bodies_param(s, p, cmd)?;
     let tolerance = expr(p, "tolerance").unwrap_or_else(|| "0".into());
     check_expr(s, &tolerance, Kind::Length, cmd, "tolerance")?;
-    add_feature(s, p, FeatureKind::Stitch { bodies, tolerance })
+    add_feature(s, p, FeatureKind::Stitch { bodies: bodies.into_iter().map(BodyName).collect(), tolerance })
 }
 
 fn thicken(s: &mut Session, p: &Value) -> Result<Value> {
@@ -452,11 +485,11 @@ fn thicken(s: &mut Session, p: &Value) -> Result<Value> {
     let thickness = expr(p, "thickness").ok_or_else(|| bad(cmd, "`thickness` is required"))?;
     check_expr(s, &thickness, Kind::Length, cmd, "thickness")?;
     let kind = FeatureKind::Thicken {
-        bodies,
+        bodies: bodies.into_iter().map(BodyName).collect(),
         thickness,
         symmetric: bool_(p, "symmetric").unwrap_or(false),
         operation: operation(p, cmd)?,
-        targets: string_list(p, "targets"),
+        targets: string_list(p, "targets").into_iter().map(BodyName).collect(),
     };
     add_feature(s, p, kind)
 }
@@ -486,7 +519,7 @@ fn extend(s: &mut Session, p: &Value) -> Result<Value> {
                 return Err(bad(cmd, format!("no body `{tb}`")));
             }
             let point = t.get("point").and_then(vec3).ok_or_else(|| bad(cmd, "`up_to.point` must be [x, y, z] on the target face"))?;
-            Some(ExtendTo::Face(FaceAt { body: tb, point }))
+            Some(ExtendTo::Face(FaceAt { body: BodyName(tb), point: Position(point) }))
         }
         Some(v) => Some(ExtendTo::Plane(plane_param(s, Some(v), cmd)?)),
     };
@@ -500,7 +533,11 @@ fn extend(s: &mut Session, p: &Value) -> Result<Value> {
     };
     check_expr(s, &distance, Kind::Length, cmd, "distance")?;
     let neighbours = bool_(p, "neighbours").unwrap_or(true);
-    add_feature(s, p, FeatureKind::SurfaceExtend { body, edges, distance, mode, up_to, neighbours })
+    add_feature(
+        s,
+        p,
+        FeatureKind::SurfaceExtend { body: BodyName(body), edges: edges.into_iter().map(Position).collect(), distance, mode, up_to, neighbours },
+    )
 }
 
 fn trim(s: &mut Session, p: &Value) -> Result<Value> {
@@ -514,11 +551,11 @@ fn trim(s: &mut Session, p: &Value) -> Result<Value> {
         Some(t) => {
             let tb = t.get("body").and_then(Value::as_str).ok_or_else(|| bad(cmd, "`tool.body` must name a body"))?.to_string();
             let point = t.get("point").and_then(vec3).ok_or_else(|| bad(cmd, "`tool.point` must be [x, y, z] on the tool face"))?;
-            (PlaneRef::Origin { name: "XY".into() }, Some(FaceAt { body: tb, point }))
+            (PlaneRef::Origin { name: "XY".into() }, Some(FaceAt { body: BodyName(tb), point: Position(point) }))
         }
         None => (plane_param(s, p.get("plane"), cmd)?, None),
     };
-    add_feature(s, p, FeatureKind::SurfaceTrim { body, plane, tool, keep })
+    add_feature(s, p, FeatureKind::SurfaceTrim { body: BodyName(body), plane, tool, keep: Position(keep) })
 }
 
 #[cfg(test)]

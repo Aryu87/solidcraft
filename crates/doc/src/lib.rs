@@ -34,10 +34,12 @@ pub mod metadata;
 pub use metadata::Metadata;
 pub mod motion;
 mod name_lookup;
+mod names;
 pub mod naming;
 mod params;
 pub mod physical_material;
 mod piece_names;
+mod points;
 mod profile_refs;
 pub mod progress;
 mod walk;
@@ -60,7 +62,10 @@ pub use eval::{
     revolve_extent, revolve_extent_with_convention, select_profiles, sketch_hole_direction, state_in_frame, state_in_frame_at, through_all_distance,
     world_state, world_state_reusing,
 };
+pub use expr::Expr;
+pub use names::{BodyName, FeatureName, SketchId};
 pub use params::{ParamRow, ParamUser, cycles};
+pub use points::{Dir, FacePick, Position, plain};
 pub use solidcraft_kernel as kernel;
 pub use solidcraft_sketch as sketch;
 
