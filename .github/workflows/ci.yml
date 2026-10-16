@@ -12,6 +12,8 @@ name: CI
 
 on:
   pull_request:
+  # The merge queue: each queued group runs the full suite before it lands on main.
+  merge_group:
   push:
     branches: [main]
   schedule:
