@@ -3245,13 +3245,18 @@ pub(crate) fn change_param(app: &mut SolveApp, name: &str, expression: &str) -> 
 
 /// Start a sketch on a picked plane or planar face and turn the view to face it.
 pub fn start_sketch(app: &mut SolveApp, sel: &Sel) -> Result<(), String> {
-    let plane = match sel {
-        Sel::Plane { name } => json!(name),
-        Sel::Face { .. } => crate::sketch_attachment_ui::face_plane(app, sel).ok_or("Selected face placement no longer exists")?,
+    let mut params = match sel {
+        Sel::Plane { name } => json!({ "plane": name }),
+        Sel::Face { .. } => json!({ "plane": crate::sketch_attachment_ui::face_plane(app, sel).ok_or("Selected face placement no longer exists")? }),
         _ => return Err("Select an origin plane, construction plane or planar body face".into()),
     };
+    if let Sel::Plane { name } = sel
+        && let Some(flip) = flip_toward_viewer(app, name)
+    {
+        params["flip"] = json!(flip);
+    }
     let before = app.cam;
-    app.run("sketch.create", json!({ "plane": plane })).map_err(|error| crate::friendly_error("sketch.create", &error))?;
+    app.run("sketch.create", params).map_err(|error| crate::friendly_error("sketch.create", &error))?;
     app.pre_sketch_cam = Some(before);
     look_at_sketch(app);
     // On a face: look at the picked point, not the plane's origin (a corner of the face),
@@ -3263,6 +3268,40 @@ pub fn start_sketch(app: &mut SolveApp, sel: &Sel) -> Result<(), String> {
         app.animate_to(to);
     }
     Ok(())
+}
+
+/// A new sketch on origin or construction plane `name` faces the viewer: when the camera is
+/// behind the plane's normal, the in-plane axis to turn the plane about (`"x"` or `"y"`), chosen
+/// so the sketch's y axis stays as upright on screen as it can (x then runs to the right).
+fn flip_toward_viewer(app: &SolveApp, name: &str) -> Option<&'static str> {
+    let plane = plane_by_name(app, name)?;
+    let n = plane.normal();
+    // Where the eye is: in perspective its position, in orthographic only its direction counts.
+    let side = if app.cam.fov > 0.0 { (app.cam.eye() - plane.origin).dot(n) } else { app.cam.basis().2.dot(n) };
+    if side >= -1e-9 {
+        return None;
+    }
+    let up = app.cam.up.dir();
+    Some(if plane.y.dot(up) > 1e-9 { "y" } else { "x" })
+}
+
+/// The world plane of an origin plane or a construction plane by name.
+fn plane_by_name(app: &SolveApp, name: &str) -> Option<solidcraft_engine::geom::Plane> {
+    if let Some(p) = solidcraft_engine::geom::Plane::named(name) {
+        // In an active component its origin planes are the component's.
+        let m = app.session.active_component_frame();
+        let (o, x, y) = (
+            solidcraft_engine::doc::apply_point(&m, p.origin),
+            solidcraft_engine::doc::apply_vector(&m, p.x),
+            solidcraft_engine::doc::apply_vector(&m, p.y),
+        );
+        return solidcraft_engine::geom::Plane::new(o, x, y);
+    }
+    let st = app.session.world_state();
+    st.construct.iter().find(|c| c.name == name).and_then(|c| match &c.geom {
+        solidcraft_engine::doc::construct::ConstructGeom::Plane(pl) => Some(*pl),
+        _ => None,
+    })
 }
 
 /// Animate the camera to look straight at the active sketch plane.
@@ -4257,6 +4296,7 @@ pub(crate) fn plane_sel(s: &Session, pl: &PlaneRef) -> Option<Sel> {
     match pl {
         PlaneRef::Origin { name } | PlaneRef::Construction { name } => Some(Sel::Plane { name: name.clone() }),
         PlaneRef::Custom { plane } | PlaneRef::Face { plane, .. } => face_sel(s, plane.origin),
+        PlaneRef::Flipped { base, .. } => plane_sel(s, base),
         _ => None,
     }
 }

@@ -48,6 +48,14 @@ pub enum PlaneRef {
     AtAngle { base: Box<PlaneRef>, axis_origin: Vec3, axis_dir: Vec3, angle: String },
     /// A construction plane feature (by name).
     Construction { name: String },
+    /// `base` seen from its other side: the normal reversed by a half turn about the base's
+    /// own x axis (y reversed), or about its y axis (x reversed) when `about_y`. A sketch
+    /// started from behind a plane faces the viewer this way.
+    Flipped {
+        base: Box<PlaneRef>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        about_y: bool,
+    },
     /// Halfway between two planes (or planar faces); bisecting them when they meet at an angle.
     Midplane { a: Box<GeoRef>, b: Box<GeoRef> },
     /// Through two straight edges (lines) that lie in one plane.
@@ -2950,6 +2958,7 @@ impl Document {
                 let o = *axis_origin + rot(b.origin - *axis_origin);
                 Plane::new(o, rot(b.x), rot(b.y)).ok_or_else(|| DocError::Invalid("degenerate plane".into()))
             }
+            PlaneRef::Flipped { base, about_y } => Ok(self.resolve_plane_in(vals, base, depth + 1, st)?.flipped(*about_y)),
             PlaneRef::Construction { name } => {
                 // Evaluated already: as it came out.
                 if let Some(c) = st.and_then(|st| st.construct.iter().find(|c| &c.name == name))

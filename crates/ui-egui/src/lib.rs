@@ -146,6 +146,8 @@ pub mod sketch_modify_ui;
 #[cfg(test)]
 mod sketch_modify_ui_tests;
 pub mod sketch_palette;
+#[cfg(test)]
+mod sketch_side_ui_tests;
 pub(crate) mod sketch_text;
 mod sketch_text_handles;
 mod sketch_text_move;
