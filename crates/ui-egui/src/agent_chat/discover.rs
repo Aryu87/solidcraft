@@ -217,6 +217,12 @@ fn version(program: &Path, limit: Duration) -> Option<String> {
     } else {
         Command::new(program)
     };
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW: probing a console agent doesn't flash a terminal window.
+        cmd.creation_flags(0x0800_0000);
+    }
     let mut child = cmd.arg("--version").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
     let start = Instant::now();
     loop {
