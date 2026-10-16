@@ -52,7 +52,7 @@ pub fn panels(tab: &str) -> &'static [&'static str] {
     }
     match tab {
         "SOLID" => &["CREATE", "MODIFY", "ASSEMBLE", "CONSTRUCT", "INSPECT", "INSERT", "SELECT"],
-        "SKETCH" => &["CREATE", "MODIFY", "CONSTRAINTS", "INSPECT", "INSERT", "SELECT", "FINISH SKETCH"],
+        "SKETCH" => &["CREATE", "MODIFY", "PATTERN", "CONSTRAINTS", "INSPECT", "INSERT", "SELECT", "FINISH SKETCH"],
         "SURFACE" => &["CREATE", "MODIFY", "ASSEMBLE", "CONSTRUCT", "INSPECT", "INSERT", "SELECT"],
         "MESH" => &["CREATE", "PREPARE", "MODIFY", "ASSEMBLE", "CONSTRUCT", "INSPECT", "INSERT", "SELECT"],
         "SHEET METAL" => &["CREATE", "MODIFY", "ASSEMBLE", "CONSTRUCT", "INSPECT", "INSERT", "SELECT"],
@@ -69,6 +69,7 @@ pub fn promoted(tab: &str, panel: &str) -> usize {
         ("SOLID", "CREATE") => 4,
         ("SOLID", "MODIFY") => 4,
         ("SKETCH", "CONSTRAINTS") => 6,
+        ("SKETCH", "PATTERN") => 3,
         (_, "FINISH SKETCH") => 1,
         _ => 2,
     }

@@ -105,7 +105,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("solid.split_body", "Split Body", split_body)
         .at("SOLID", "MODIFY")
         .icon("split")
-        .params("body: name; plane: XY|XZ|YZ|plane name|{origin, normal} — or tool: {body, point} (a face of a body, its surface extended)"),
+        .params("body: name; plane: XY|XZ|YZ|plane name|{origin, normal} — or tool: {body, point} (a face of a body, its surface extended) — or sketch: id, line: curve id (a straight sketch line, along the sketch's normal)"),
     CommandSpec::new("solid.press_pull", "Press Pull", press_pull)
         .at("SOLID", "MODIFY")
         .icon("presspull")
@@ -1472,6 +1472,27 @@ fn split_body(s: &mut Session, p: &Value) -> Result<Value> {
     if s.model.state().body(&body).is_none() {
         return Err(bad(cmd, format!("no body `{body}`")));
     }
+    // A straight sketch line as the tool: `sketch` and `line` (#1552).
+    if p.get("sketch").is_some_and(|v| !v.is_null()) || p.get("line").is_some_and(|v| !v.is_null()) {
+        let sketch = p.get("sketch").and_then(Value::as_u64).ok_or_else(|| bad(cmd, "`sketch` must be a sketch feature id"))?;
+        let line = str_(p, "line").ok_or_else(|| bad(cmd, "`line` must name a line of the sketch"))?.to_string();
+        let st = s.model.state();
+        if st.sketch(sketch).is_none() {
+            return Err(bad(cmd, format!("no sketch {sketch}")));
+        }
+        solidcraft_doc::sketch_line_plane(&st, sketch, &line).map_err(|e| bad(cmd, e.to_string()))?;
+        return add_feature(
+            s,
+            p,
+            FeatureKind::Split {
+                body: BodyName(body),
+                plane: solidcraft_doc::PlaneRef::Origin { name: "XY".into() },
+                tool: None,
+                sketch: Some(solidcraft_doc::SketchId(sketch)),
+                line: Some(line),
+            },
+        );
+    }
     // A face as the tool: `tool: {body, point}` (its surface extended); else a plane.
     if let Some(t) = p.get("tool").filter(|t| !t.is_null()) {
         let tb = t.get("body").and_then(Value::as_str).ok_or_else(|| bad(cmd, "`tool.body` must name a body"))?.to_string();
@@ -1488,11 +1509,13 @@ fn split_body(s: &mut Session, p: &Value) -> Result<Value> {
                 body: BodyName(body),
                 plane: solidcraft_doc::PlaneRef::Origin { name: "XY".into() },
                 tool: Some(solidcraft_doc::FaceAt { body: BodyName(tb), point: Position(point) }),
+                sketch: None,
+                line: None,
             },
         );
     }
     let plane = plane_param(s, p.get("plane"), cmd)?;
-    add_feature(s, p, FeatureKind::Split { body: BodyName(body), plane, tool: None })
+    add_feature(s, p, FeatureKind::Split { body: BodyName(body), plane, tool: None, sketch: None, line: None })
 }
 
 /// ISO 273 clearance hole diameters (close, normal, loose fit) for metric bolts.

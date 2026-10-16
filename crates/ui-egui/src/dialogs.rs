@@ -522,9 +522,10 @@ impl Dialog {
                 Kind::AnglePlane { angle: "45 deg".into() },
                 vec![SelInput::new("Plane", PLANES, false), SelInput::new("Axis", AXES, false)],
             ),
-            "solid.split_body" => {
-                Dialog::new(Kind::Split, vec![SelInput::new("Body to split", BODIES, false), SelInput::new("Splitting tool", PLANES | FACES, false)])
-            }
+            "solid.split_body" => Dialog::new(
+                Kind::Split,
+                vec![SelInput::new("Body to split", BODIES, false), SelInput::new("Splitting tool", PLANES | FACES | AXES, false)],
+            ),
             "solid.scale" => Dialog::new(Kind::Scale { factor: "2".into() }, vec![SelInput::new("Bodies", BODIES, true)]),
             "solid.offset_face" => Dialog::new(Kind::OffsetFaces { distance: "2 mm".into() }, vec![SelInput::new("Faces", PLANAR_FACES, true)]),
             "solid.thread" => {
@@ -819,7 +820,8 @@ impl Dialog {
 
     /// Dialogs holding a table get the wide limit.
     pub fn is_wide(&self) -> bool {
-        matches!(self.kind, Kind::Params { .. }) || matches!(&self.kind, Kind::Motion(k) if k.wide())
+        matches!(self.kind, Kind::Params { .. } | Kind::SketchModify(crate::sketch_modify_ui::Mod::PatternRect { .. }))
+            || matches!(&self.kind, Kind::Motion(k) if k.wide())
     }
 
     pub fn wants_picks(&self) -> bool {
@@ -1609,6 +1611,10 @@ fn selection_label(s: &Session, item: &Sel) -> String {
 /// Selection input rows: label, "N selected" (or a hint) and a clear button; clicking a row
 /// makes it the active input.
 fn input_rows(d: &mut Dialog, ui: &mut egui::Ui, s: &Session) {
+    input_rows_range(d, ui, s, 0..d.inputs.len());
+}
+
+fn input_rows_range(d: &mut Dialog, ui: &mut egui::Ui, s: &Session, range: std::ops::Range<usize>) {
     // Edit Text shows its Path input among its own rows.
     if matches!(d.kind, Kind::Text(_)) {
         return;
@@ -1616,7 +1622,7 @@ fn input_rows(d: &mut Dialog, ui: &mut egui::Ui, s: &Session) {
     let t = Tokens::get();
     let mut clear: Option<usize> = None;
     let mut activate: Option<usize> = None;
-    for (i, inp) in d.inputs.iter().enumerate() {
+    for (i, inp) in d.inputs.iter().enumerate().skip(range.start).take(range.end.saturating_sub(range.start)) {
         row_label(ui, inp.label);
         ui.horizontal(|ui| {
             let active = i == d.active;
@@ -1682,6 +1688,87 @@ fn input_rows(d: &mut Dialog, ui: &mut egui::Ui, s: &Session) {
             d.profile_selection_changed = true;
         }
         d.active = i;
+    }
+}
+
+/// Each live reference sits with the independent values it drives.
+fn rectangular_pattern_rows(d: &mut Dialog, ui: &mut egui::Ui, session: &Session) -> bool {
+    use crate::sketch_modify_ui::Mod;
+    use solidcraft_engine::sketch::PatternAlignment;
+    let mut enter = false;
+    ui.vertical(|ui| {
+        ui.label(tr("dialog.selection_guidance"));
+        egui::Grid::new("pattern_source").spacing(vec2(10.0, 8.0)).show(ui, |ui| input_rows_range(d, ui, session, 0..1));
+        ui.separator();
+        ui.columns(2, |columns| {
+            for (index, ui) in columns.iter_mut().enumerate() {
+                ui.strong(tr(if index == 0 { "Direction 1" } else { "Direction 2" }));
+                egui::Grid::new(("pattern_direction", index)).spacing(vec2(8.0, 8.0)).show(ui, |ui| {
+                    input_rows_range(d, ui, session, index + 1..index + 2);
+                    let Kind::SketchModify(Mod::PatternRect { count, spacing, count2, spacing2, alignment, alignment2, reversed, reversed2 }) =
+                        &mut d.kind
+                    else {
+                        return;
+                    };
+                    let (count, spacing, alignment, reversed, count_label, spacing_label, alignment_label) = if index == 0 {
+                        (count, spacing, alignment, reversed, "Quantity", "Spacing", "Alignment")
+                    } else {
+                        (count2, spacing2, alignment2, reversed2, "Quantity 2", "Spacing 2", "Alignment 2")
+                    };
+                    row_label(ui, count_label);
+                    enter |= field(ui, count);
+                    ui.end_row();
+                    row_label(ui, spacing_label);
+                    enter |= field(ui, spacing);
+                    ui.end_row();
+                    row_label(ui, alignment_label);
+                    ui.horizontal(|ui| {
+                        pattern_toggle(ui, alignment_label, "Flip direction", "pattern_flip", reversed);
+                        let mut centered = *alignment == PatternAlignment::Center;
+                        pattern_toggle(ui, alignment_label, "Center", "pattern_center", &mut centered);
+                        *alignment = if centered { PatternAlignment::Center } else { PatternAlignment::Right };
+                    });
+                    ui.end_row();
+                });
+            }
+        });
+        ui.small(tr("Counts include the original. Center balances copies; Flip chooses the extra side for even totals."));
+    });
+    ui.end_row();
+    enter
+}
+
+pub(crate) fn pattern_toggle(ui: &mut egui::Ui, row: &str, label: &str, icon: &str, selected: &mut bool) {
+    let response = ui.add(egui::Button::new("").selected(*selected).min_size(vec2(28.0, 24.0)));
+    let t = Tokens::get();
+    crate::icons::paint(ui.painter(), response.rect.shrink(3.0), icon, t.icon, t.icon_fill, t.accent);
+    response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, *selected, tr(label)));
+    crate::scenario::publish_handle(&format!("dialog:{row}:{label}"), response.rect.center());
+    if response.on_hover_text(tr(label)).clicked() {
+        *selected = !*selected;
+    }
+}
+
+fn error_rows(app: &mut SolveApp, ctx: &egui::Context, d: &mut Dialog, ui: &mut egui::Ui, full_width: bool) {
+    if matches!(d.kind, Kind::SketchModify(_))
+        && d.previews()
+        && let Err(error) = apply_commands(app, d)
+    {
+        d.refuse(app, error);
+    }
+    if let Some(error) = d.error.as_ref().or(app.preview.error.as_ref()).cloned() {
+        if !full_width {
+            row_label(ui, "");
+        }
+        ui.vertical(|ui| {
+            ui.add(egui::Label::new(RichText::new(error.as_str()).color(Tokens::get().error)).wrap());
+            let response = ui.button("Create Issue…");
+            crate::scenario::publish_handle("dialog:create_issue", response.rect.center());
+            if response.clicked() {
+                crate::issue_report::begin(app, ctx, Some(d), Some(&error));
+            }
+        });
+        ui.end_row();
     }
 }
 
@@ -1998,6 +2085,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let mut cancel = false;
     let mut enter = false;
     let wide = d.is_wide();
+    let pattern_columns = matches!(d.kind, Kind::SketchModify(crate::sketch_modify_ui::Mod::PatternRect { .. }));
     let raw_title = title(&d.kind);
     let heading = if d.editing.is_some() { crate::i18n::format("dialog.edit_title", &[("title", tr(raw_title))]) } else { tr(raw_title).to_string() };
     let frame = crate::frame::dock_frame(ctx, side);
@@ -2027,7 +2115,13 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         // Long texts (errors, notes) wrap instead of widening the dialog.
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
         let margin = horizontal_frame;
-        let min_w = if wide { 480.0 } else { DIALOG_MIN_W } - margin;
+        let min_w = if pattern_columns {
+            540.0
+        } else if wide {
+            480.0
+        } else {
+            DIALOG_MIN_W
+        } - margin;
         ui.set_min_width(min_w);
         ui.set_max_width(if wide { DIALOG_WIDE_MAX_W } else { DIALOG_MAX_W } - margin);
         // Rows that end at the right edge line up with last frame's content width.
@@ -2081,7 +2175,12 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             if let Kind::Motion(k @ crate::dialogs_motion::Mo::Configurations { .. }) = &mut d.kind {
                 enter |= crate::dialogs_motion::rows(app, ui, k, &mut d.inputs);
             }
-            egui::Grid::new("sc_dialog_grid").num_columns(2).spacing(vec2(10.0, 8.0)).show(ui, |ui| {
+            egui::Grid::new("sc_dialog_grid").num_columns(if pattern_columns { 1 } else { 2 }).spacing(vec2(10.0, 8.0)).show(ui, |ui| {
+                if pattern_columns {
+                    enter |= rectangular_pattern_rows(&mut d, ui, &app.session);
+                    error_rows(app, ctx, &mut d, ui, true);
+                    return;
+                }
                 if matches!(&d.kind, Kind::Motion(crate::dialogs_motion::Mo::Configurations { .. })) {
                     return;
                 }
@@ -2798,24 +2897,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         }
                     }
                 }
-                if matches!(d.kind, Kind::SketchModify(_))
-                    && d.previews()
-                    && let Err(error) = apply_commands(app, &d)
-                {
-                    d.refuse(app, error);
-                }
-                if let Some(e) = d.error.as_ref().or(app.preview.error.as_ref()).cloned() {
-                    row_label(ui, "");
-                    ui.vertical(|ui| {
-                        ui.add(egui::Label::new(RichText::new(e.as_str()).color(t.error)).wrap());
-                        let response = ui.button("Create Issue…");
-                        crate::scenario::publish_handle("dialog:create_issue", response.rect.center());
-                        if response.clicked() {
-                            crate::issue_report::begin(app, ctx, Some(&d), Some(&e));
-                        }
-                    });
-                    ui.end_row();
-                }
+                error_rows(app, ctx, &mut d, ui, false);
             });
         });
         ui.add_space(6.0);
@@ -3847,7 +3929,19 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
                     Some((_, n)) => json!({"body": body, "plane": {"origin": pt(*point), "normal": pt(n)}}),
                     None => json!({"body": body, "tool": {"body": b, "point": pt(*point)}}),
                 },
-                _ => return Err("pick a plane or a face".into()),
+                // A straight sketch line, in the sketch it was picked in (#1552).
+                Some(Sel::SketchCurve { id }) => {
+                    let picked = d.extra.get("tool_sketch").and_then(Value::as_u64);
+                    let st = s.world_state();
+                    let holding: Vec<u64> = st.sketches.iter().filter(|ss| ss.sketch.curve_index(id).is_some()).map(|ss| ss.feature).collect();
+                    let sketch = match picked {
+                        Some(k) if holding.contains(&k) => k,
+                        None if holding.len() == 1 => holding.first().copied().ok_or("pick a sketch line")?,
+                        _ => return Err("pick the sketch line in the viewport".into()),
+                    };
+                    json!({"body": body, "sketch": sketch, "line": id})
+                }
+                _ => return Err("pick a plane, a face or a sketch line".into()),
             };
             ("solid.split_body", p)
         }
@@ -4825,12 +4919,17 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             }
             d
         }
-        FeatureKind::Split { body, plane, tool } => {
+        FeatureKind::Split { body, plane, tool, sketch, line } => {
             let mut d = start("solid.split_body")?;
             if let Some(inp) = d.inputs.first_mut() {
                 inp.items = vec![Sel::Body { name: body.to_string() }];
             }
-            if let Some(inp) = d.inputs.get_mut(1) {
+            if let (Some(k), Some(id)) = (sketch, line) {
+                d.extra.insert("tool_sketch".into(), json!(k.0));
+                if let Some(inp) = d.inputs.get_mut(1) {
+                    inp.items = vec![Sel::SketchCurve { id: id.clone() }];
+                }
+            } else if let Some(inp) = d.inputs.get_mut(1) {
                 inp.items = match tool {
                     Some(t) => face_sel(s, t.point.0).into_iter().collect(),
                     None => plane_sel(s, plane).into_iter().collect(),

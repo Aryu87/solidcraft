@@ -4403,10 +4403,17 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             }
             Ok(())
         }
-        FeatureKind::Split { body, plane, tool } => {
+        FeatureKind::Split { body, plane, tool, sketch, line } => {
             let i = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
             let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Unknown(format!("body `{body}`"))) };
             let parts = match tool {
+                // A sketch line: the plane through it along the sketch's normal.
+                _ if sketch.is_some() || line.is_some() => {
+                    let (Some(sketch), Some(line)) = (sketch, line) else {
+                        return Err(DocError::Invalid("a sketch line tool needs both its sketch and its line".into()));
+                    };
+                    kernel::split_by_plane(&mb.body, &sketch_line_plane(st, sketch.0, line)?)?
+                }
                 // A face of a body (its surface extended).
                 Some(t) => {
                     let tb = st.body(&t.body).ok_or_else(|| DocError::Unknown(format!("body `{}`", t.body)))?;
@@ -5269,4 +5276,18 @@ mod body_name_tests {
         assert_eq!(last, "R_0603 (50000)");
         assert!(began.elapsed() < std::time::Duration::from_secs(5), "{:?}", began.elapsed());
     }
+}
+
+/// The plane a straight sketch line sweeps along its sketch's normal: through the line, its x
+/// along the line and its y along the normal (a Split Body tool, #1552).
+pub fn sketch_line_plane(st: &ModelState, sketch: u64, line: &str) -> Result<Plane> {
+    let ss = st.sketch(sketch).ok_or_else(|| DocError::Unknown(format!("sketch {sketch}")))?;
+    let ci = ss.sketch.curve_index(line).ok_or_else(|| DocError::Unknown(format!("curve `{line}`")))?;
+    let (a, b) = match ss.sketch.segs(ci).as_slice() {
+        [solidcraft_geom::Seg2::Line { a, b }] => (*a, *b),
+        _ => return Err(DocError::Invalid(format!("`{line}` is not a straight line: split by a sketch line"))),
+    };
+    let (wa, wb) = (ss.plane.to_world(a), ss.plane.to_world(b));
+    let x = (wb - wa).normalized().ok_or_else(|| DocError::Invalid(format!("`{line}` has no length")))?;
+    Ok(Plane { origin: wa, x, y: ss.plane.normal() })
 }

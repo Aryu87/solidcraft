@@ -189,6 +189,9 @@ pub enum ConstraintKind {
         center: Option<usize>,
         angle: f64,
         offset: Vec2,
+        /// Displacements along and perpendicular to live sketch lines (at most two).
+        #[serde(default)]
+        directions: [Option<(usize, Vec2)>; 2],
     },
     /// The independent radius of a patterned circle or ellipse follows its seed.
     PatternRadius {
@@ -423,7 +426,9 @@ impl ConstraintKind {
     pub fn indices(&self) -> (Vec<usize>, Vec<usize>) {
         use ConstraintKind::*;
         match *self {
-            PatternPoint { p, q, center, .. } => (vec![p, q].into_iter().chain(center).collect(), vec![]),
+            PatternPoint { p, q, center, directions, .. } => {
+                (vec![p, q].into_iter().chain(center).collect(), directions.into_iter().flatten().map(|(l, _)| l).collect())
+            }
             PatternRadius { a, b } => (vec![], vec![a, b]),
             Coincident { p, q } | HorizontalPoints { p, q } | VerticalPoints { p, q } => (vec![p, q], vec![]),
             Distance { p, q, .. } | DistanceX { p, q, .. } | DistanceY { p, q, .. } => (vec![p, q], vec![]),
@@ -458,11 +463,14 @@ impl ConstraintKind {
             None => ok2 = false,
         };
         match self {
-            PatternPoint { p, q, center, .. } => {
+            PatternPoint { p, q, center, directions, .. } => {
                 fp(p);
                 fp(q);
                 if let Some(c) = center {
                     fp(c);
+                }
+                for (l, _) in directions.iter_mut().flatten() {
+                    fc(l);
                 }
             }
             PatternRadius { a, b } => {
@@ -848,7 +856,13 @@ impl Sketch {
         let need_line = |i: usize| if is_line(i) { Ok(()) } else { Err(SketchError::WrongKind(name(i), "needs a line".into())) };
         let need_round = |i: usize| if is_round(i) { Ok(()) } else { Err(SketchError::WrongKind(name(i), "needs a circle or arc".into())) };
         match *k {
-            PatternPoint { p, q, angle, offset, .. } => {
+            PatternPoint { p, q, angle, offset, directions, .. } => {
+                for (l, distance) in directions.into_iter().flatten() {
+                    need_line(l)?;
+                    if !distance.x.is_finite() || !distance.y.is_finite() || distance.x.abs() > MAX_COORD || distance.y.abs() > MAX_COORD {
+                        return Err(SketchError::Invalid("invalid pattern direction displacement".into()));
+                    }
+                }
                 if p == q
                     || !angle.is_finite()
                     || angle.abs() > std::f64::consts::TAU

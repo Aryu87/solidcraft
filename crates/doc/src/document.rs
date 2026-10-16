@@ -759,6 +759,12 @@ pub enum FeatureKind {
         plane: PlaneRef,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tool: Option<FaceAt>,
+        /// A straight line of this sketch as the tool (#1552): the plane through it along the
+        /// sketch's normal, which follows the sketch.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sketch: Option<SketchId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        line: Option<String>,
     },
     /// A construction axis (Fusion's CONSTRUCT axes).
     ConstructionAxis {

@@ -762,6 +762,20 @@ pub(crate) fn paint_with(p: &Painter, r: Rect, name: &str, ink: Color32, fill: C
             pen.closed(&[(21.0, 6.0), (15.0, 10.0), (15.0, 18.0), (21.0, 18.0)], a);
         }
         "sketch_circ_pattern" => paint(p, r, "pattern_circ", ink, Color32::TRANSPARENT, a),
+        "pattern_flip" => {
+            // Opposing arrows show reversal, with a short reference tick between them.
+            pen.arrow((4.0, 7.0), (20.0, 7.0), a);
+            pen.arrow((20.0, 17.0), (4.0, 17.0), ink);
+            pen.line(&[(12.0, 10.0), (12.0, 14.0)], ink);
+        }
+        "pattern_center" => {
+            // An original on a reference axis, with one equally spaced copy on either side.
+            pen.line(&[(12.0, 3.0), (12.0, 21.0)], a);
+            pen.line(&[(4.0, 12.0), (20.0, 12.0)], ink);
+            for x in [4.0, 12.0, 20.0] {
+                pen.circle(x, 12.0, 2.4, fill, if x == 12.0 { a } else { ink });
+            }
+        }
         "sketch_rect_pattern" => paint(p, r, "pattern_rect", ink, Color32::TRANSPARENT, a),
         "line_mid" => {
             pen.line(&[(3.0, 19.0), (21.0, 5.0)], a);
