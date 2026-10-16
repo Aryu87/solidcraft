@@ -62,6 +62,8 @@ Install details, upgrading from earlier builds and building from source are in
 **Documentation:** the [SolidCraft book](https://bherbruck.github.io/solidcraft/) (user guide,
 developer guide and command reference; sources in [docs/book](docs/book)).
 
+**Community:** chat with users and contributors on [Discord](https://discord.gg/FtU4NQNVDH).
+
 **Status: early but usable for simple parts.** 75 of 76 public reference parts
 match their analytic or FreeCAD-computed volume, area, centre of mass and bounding box
 ([docs/oracle.md](docs/oracle.md)); the other is a tracked bug.
