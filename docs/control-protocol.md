@@ -160,7 +160,7 @@ labels; `prefs:measure_axis_distances` identifies the checkbox.
 | `ui.resize` | `width`, `height` | |
 | `app.quit` | `force?` (quit without asking about unsaved designs) | `quitting` (the window closes), `asking` (a "save changes?" prompt is open) |
 
-`ui.workspace {workspace?: "design" | "render" | "manufacture"}` reads or changes the active workspace.
+`ui.workspace {workspace?: "design" | "render"}` reads or changes the active workspace.
 Entering Render requires finishing the current modelling operation; returning restores
 the Design camera. See [the integrated Render workspace](render-workspace.md).
 
